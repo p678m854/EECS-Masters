@@ -142,6 +142,7 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
     #Initialize vectors
     n     = tvec.shape[0] #Length of x vector
     dmdxm = np.zeros((n,m+1)) #n x (m+1) matrix of the ith derivative
+    #print(dmdxm.size())
     hs    = int((window - 1)/2) #Half window size
     
     #Conversion between polynomial coefficients and the derivatives
@@ -159,7 +160,7 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
         for j in range(m+1):
             X[:,j] = X[:,j] ** j
         Xt = np.transpose(X) #(m+1) x ws
-        
+
         try:
             #Least squares solution (m+1)x1
             XtXinv = np.linalg.inv(np.matmul(Xt,X))
@@ -168,9 +169,8 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
             #exact solution
             X = X[:(m+1), :(m+2)] #Get a square matrix
             theta = np.matmul(np.linalg.inv(X), np.transpose(y[:(m+1)]))
-            
+
         dmdxm[i,:] = np.transpose(theta)*diff_multipliers
-    
     #Beginning and ending sections
     for (i0, index) in zip([hs, n-hs-1], [list(range(hs)), list(range(n-hs,n))]):
         
@@ -185,5 +185,5 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
         t_train = tvec[i_train] - t0
         x_train = xvec[i_train]
         dmdxm[index,:] = lsee_polynomial_extrapolate(t_train, x_train, t_predict, m)
-        
+
     return dmdxm
