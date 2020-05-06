@@ -187,3 +187,45 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
         dmdxm[index,:] = lsee_polynomial_extrapolate(t_train, x_train, t_predict, m)
 
     return dmdxm
+
+
+"""
+Fourier Analysis
+"""
+def FFT(tvec, X, Fs):
+    """
+    Description:
+    Inputs:
+        * tvec = 1xN time vector
+        * X    = NxM matrix of time domain values
+        * Fs   = Sample frequency
+    Outputs:
+        * fvec = 1xNf vector of frequencies
+        * Xf   = NfxM matrix of frequency coefficients
+    """
+    #Set up for frequency vector
+    N = len(tvec)
+    M = X.shape[1]
+    fvec = Fs*np.arange(-N/2,N/2)/N #Both negative and positive frequencies
+
+    #Set up preallocation of results
+    Nf = len(fvec)
+    Xf = np.zeros((Nf,M), dtype=complex)
+
+    #Imaginary unit
+    z = 1j
+
+    #Loop through time vector
+    for i in range(N):
+        #Iterate through frequency
+        # Preallocate the sine and cosine components
+        c = np.cos(2*np.pi*fvec*tvec[i]) #1xNf
+        s = np.sin(2*np.pi*fvec*tvec[i]) #1xNf
+
+        # Calculate additional part to it
+        print(c.shape)
+        print(X[i,:].shape_
+        Xf = Xf + np.matmul(np.transpose((c - z*s)),X[i,:] + 0*z)
+        #NfxM = NfxM + (1xNf)'*(1xM)
+
+    return (f,Xf)
