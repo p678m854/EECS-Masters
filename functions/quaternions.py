@@ -48,6 +48,32 @@ def Rmatrix_from_quaternions(qw, qx, qy, qz):
         
     return Rmatrix
 
+def quaternion_solution_check(qn1, qn):
+    """
+    Summary: Returns most likely quaternion solution between the positive rotation angle and is negative rotation angle. 
+    Metric to decide is the minimization of the L2 norm.
+    
+    Parameters:
+        * q is a quaternion of [q0, q1, q2, q3] in a list
+        * qn1 is the previous timestep quaternion
+        * qn is the current timestep quaternion
+    """
+    #Make opposite quaternion
+    neg_qn = [-1*qi for qi in qn]
+    
+    #Scoring based off L2 norm since update rate is so high
+    sp = 0
+    sn = 0
+    for qn1_i, qn_i, neg_qn_i in zip(qn1, qn, neg_qn):
+        sp += (qn1_i - qn_i) ** 2
+        sn += (qn1_i - neg_qn_i) ** 2
+    #Return most likely
+    if sn < sp:
+        return neg_qn
+    else:
+        return qn
+
+
 def Wq(q0, q1, q2, q3):
     """W matrix"""
     return np.array([[-q1,  q0, -q3,  q2],

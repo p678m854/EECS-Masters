@@ -12,6 +12,10 @@ import pandas as pd
 import io
 import requests
 
+#Self library
+import dsp
+import quaternions
+
 def quaternion_to_euler(qw, qx, qy, qz):
     """From a quaternion to aircraft euler angles.
     
@@ -248,3 +252,202 @@ def read_blackbird_test(maneuver, yawdirection, speed):
                          pwm_df, 
                          motors_df], sort=True)
     return test_df
+
+def imu_installation_correction(test):
+    """
+    Input:
+        * test: Blackbird dataset in pandas dataframe
+    Output:
+        * test: Dataset with installation correction fixed
+    """
+    #Accelerometer
+    test.loc[:,['ax_[m/s2]', 'ay_[m/s2]']] = test.loc[:,['ay_[m/s2]', 'ax_[m/s2]']].values
+    test.loc[:,['ax_[m/s2]']] = -1.*test.loc[:,['ax_[m/s2]']].values
+    #Gyroscope
+    test.loc[:,['omegax_[dps]', 'omegay_[dps]']] = test.loc[:,['omegax_[dps]',
+                                                               'omegay_[dps]']].values
+    test.loc[:,['omegax_[dps]']] = -1.*test.loc[:,['omegax_[dps]']].values
+    return test
+
+def inertial_position_derivatives_estimation(test):
+    """
+    Input:
+        * test: Blackbird dataset in a pandas dataframe
+    Output:
+        * test: Dataset with added velocity/acceleration estimates using a SG filter and the quaternions
+    """
+    #Get columns of interest and indexes
+    subset = test[['px_[m]', 'py_[m]', 'pz_[m]']].dropna()
+    ind = subset.index
+    
+    #Time vector for SG
+    rbts2s = 10 ** -9
+    tvec = (subset.index - subset.index[0])*rbts2s
+    tvec = tvec.astype('float')
+    
+    #Iterate through positions
+    for axis in ['x', 'y', 'z']:
+        #Get values
+        p = subset[('p' + axis + '_[m]')].values
+        #Do estimation
+        p_est = dsp.central_sg_filter(tvec, p, m=3, window=27)
+        
+        #Store values in a new dataframe
+        cols = [('p' + axis + '_[m]_est'),
+                ('v' + axis + '_I_[m/s]'),
+                ('a' + axis + '_I_[m/s2]')]
+        data = {cols[0] : p_est[:,0], cols[1] : p_est[:,1], cols[2] : p_est[:,2]}
+        df = pd.DataFrame(data, columns=cols)
+        df.index = ind
+        test = pd.concat([test, df], sort=True)
+        
+    return test
+
+def consistent_quaternions(test):
+    """
+    Input:
+        * test: Blackbird dataset in a pandas dataframe
+    Output:
+        * test: Dataset with added velocity/acceleration estimates using a SG filter and the quaternions
+    """
+    
+    for cols in [['qw', 'qx', 'qy', 'qz'], ['qwr', 'qxr', 'qyr', 'qzr']]:
+        #get quaternions and their indexes
+        subset = test[cols].dropna()
+        ind = subset.index
+        q = subset.values
+    
+        #Find where the series reverses
+        reversed_i = None
+        for i in range(1,len(ind)):
+            if ind[i] < ind[i-1]:
+                reversed_i = i
+                break
+            else:
+                pass
+        #Removed reversed section
+        if reversed_i != None:
+            ind = ind[:reversed_i]
+            q = q[:reversed_i]
+            
+        #Consistency check
+        for i in range(1,len(q)):
+            q[i] = quaternions.quaternion_solution_check(q[i-1], q[i])
+        
+        #Make new
+        df = pd.DataFrame(q, columns=cols, index = ind)
+        test = test.drop(cols, axis=1)
+        test = pd.concat([test, df], sort=True)
+    
+    return test
+    
+def inertial_quaternion_derivatives_estimation(test):
+    """
+    Input:
+        * test: Blackbird dataset in a pandas dataframe
+    Output:
+        * test: Dataset with added quaternion angular velocity/acceleration estimates using a SG filter and the quaternions
+    """
+    #Get columns of interest and indexes
+    subset = test[['qw', 'qx', 'qy', 'qz']].dropna()
+    ind = subset.index
+    
+    #Time vector for SG
+    rbts2s = 10 ** -9
+    tvec = (subset.index - subset.index[0])*rbts2s
+    tvec = tvec.astype('float')
+    
+    #Iterate through positions
+    for axis in ['w', 'x', 'y', 'z']:
+        #Get values
+        q = subset[('q' + axis)].values
+        #Do estimation
+        q_est = dsp.central_sg_filter(tvec, q, m=5, window=27)
+        
+        #Store values in a new dataframe
+        cols = [('q' + axis + '_est'),
+                ('qdot' + axis),
+                ('qdotdot' + axis)]
+        data = {cols[0] : q_est[:,0], cols[1] : q_est[:,1], cols[2] : q_est[:,2]}
+        df = pd.DataFrame(data, columns=cols, index=ind)
+        test = pd.concat([test, df], sort=True)
+        
+    return test
+
+def body_angular_derivative_estimate(test):
+    """
+    Input:
+        * test: Blackbird dataset in a pandas dataframe with the first and second time derivative of the quaternion vector.
+    Output:
+        * test: Dataset with added angular velocity/acceleration estimates from quaternions. There are two solutions available but the recorded one will be the solution that minimizes the estimated average squared L2 between the quaternion omega vector and the onboard IMU vector.
+    """
+    #Constants
+    rbts2s = 10 ** -9
+    
+    #Getting quaternions, 1st time derivative, and time vector
+    q = test[['qw_est', 'qx_est', 'qy_est', 'qz_est']].dropna()
+    t_q = q.index
+    t_q = (t_q - test.index[0]) * rbts2s
+    t_q = t_q.astype('float')
+    q = q.values
+    qdot = test[['qdotw', 'qdotx', 'qdoty', 'qdotz']].dropna().values
+    
+    #Getting IMU values and time derivative
+    omega_imu = test[['omegax_[dps]', 
+                      'omegay_[dps]', 
+                      'omegaz_[dps]']].dropna()
+    t_imu = omega_imu.index
+    t_imu = (t_imu - test.index[0]) * rbts2s
+    t_imu = t_imu.astype('float')
+    omega_imu = omega_imu.values
+
+    #Constuct the two omega vectors from the quaternions
+    omega_q  = np.zeros((len(t_q),3))
+    omega_qa = np.zeros((len(t_q),3))
+    
+    for i in range(len(t_q)):
+        omega_q[i]  = quaternions.Omega_from_quaternions(q[i], qdot[i])
+        omega_qa[i] = quaternions.Omega_from_quaternions_alt(q[i], qdot[i])
+        
+    #Iterate through IMU series determining errors
+    N = len(t_imu)
+    M = len(t_q)
+    e1 = 0.
+    e2 = 0.
+    qi = 0
+    for i in range(N):
+        t = t_imu[i]
+        while t_q[qi] < t and qi < M:
+            qi += 1
+        #End conditions of quaternion index
+        if qi == M:
+            break #
+        elif qi == 0:
+            pass #Quaternions started after IMU is on
+        else:
+            #Linear interpolate
+            t1 = t_q[qi-1]
+            t2 = t_q[qi]
+            o1 = (t - t2)/(t1 - t2)*omega_q[qi - 1] + (t - t1)/(t2 - t1)*omega_q[qi]
+            o2 = (t - t2)/(t1 - t2)*omega_qa[qi - 1] + (t - t1)/(t2 - t1)*omega_qa[qi]
+            #Calculate errors
+            e1 += (((o1[0] - omega_imu[i,0]) ** 2) + 
+                   ((o1[1] - omega_imu[i,1]) ** 2) + 
+                   ((o1[2] - omega_imu[i,2]) ** 2))/N
+            e2 += (((o2[0] - omega_imu[i,0]) ** 2) + 
+                   ((o2[1] - omega_imu[i,1]) ** 2) + 
+                   ((o2[2] - omega_imu[i,2]) ** 2))/N
+    
+    # Determine best solution
+    sol = None
+    if e1 <= e2:
+        sol = 1
+    else:
+        sol = 2
+        omega_q = omega_qa
+        
+    #Get omdega dot estimates
+    omegadot = np.zeros((M,3))
+    for i in range(M):
+        if sol == 1:
+            omegadot[i] = quaternions.omegadot_from_quaternions(

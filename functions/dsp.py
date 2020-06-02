@@ -205,13 +205,20 @@ def FFT(tvec, X, Fs):
     """
     #Set up for frequency vector
     N = len(tvec)
-    M = X.shape[1]
+    if len(X.shape) == 1:
+        M = 0
+    else:
+        M = X.shape[1]
+    
     fvec = Fs*np.arange(-N/2,N/2)/N #Both negative and positive frequencies
-
+    
     #Set up preallocation of results
     Nf = len(fvec)
-    Xf = np.zeros((Nf,M), dtype=complex)
-
+    if M == 0:
+        Xf = np.zeros((Nf,), dtype=complex)
+    else:
+        Xf = np.zeros((Nf,M), dtype=complex)
+    
     #Imaginary unit
     z = 1j
 
@@ -221,11 +228,12 @@ def FFT(tvec, X, Fs):
         # Preallocate the sine and cosine components
         c = np.cos(2*np.pi*fvec*tvec[i]) #1xNf
         s = np.sin(2*np.pi*fvec*tvec[i]) #1xNf
-
+        
         # Calculate additional part to it
-        print(c.shape)
-        print(X[i,:].shape_
-        Xf = Xf + np.matmul(np.transpose((c - z*s)),X[i,:] + 0*z)
+        if M == 0:
+            Xf = Xf + (c - z*s)*(X[i] + 0*z)
+        else:
+            Xf = Xf + np.matmul(np.transpose(c - z*s), X[i,:] + 0*z)
         #NfxM = NfxM + (1xNf)'*(1xM)
 
-    return (f,Xf)
+    return (fvec, Xf)
