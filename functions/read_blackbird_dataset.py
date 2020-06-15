@@ -16,6 +16,40 @@ import requests
 import dsp
 import quaternions
 
+class BlackbirdVehicle():
+    """ 
+    Blackbird: https://arxiv.org/pdf/1810.01987.pdf
+    Same Frame: https://arxiv.org/pdf/1809.04048.pdf
+    Motors:
+                x
+                ^
+                |
+           1    |   2
+                |
+     -y <-------o-------> y
+                |
+           4    |   3
+                |
+                v
+               -x
+    
+    """
+    def __init__(self):
+        self.mass = 0.915 # [kg]
+        self.Ixx = 4.9*.01 # [kg m^2] although MIT says [kg m^-2]
+        self.Iyy = 4.9*.01 # [kg m^2] although MIT says [kg m^-2]
+        self.Izz = 6.9*.01 # [kg m^2] although MIT says [kg m^-2]
+        self.l = np.sqrt(2*0.09*0.09) # 0.13 # Arm length [m]
+        self.CT = 2.27*(10**-8) # [N rpm^-2]
+        self.arm_angle_from_xbody = np.pi/4 # 45 degrees
+        # "adjacent motors are 18 cm apart" which leads me to believe a square so 45 degree angles
+        # TODO: Find their CQ or at least estimate it
+    
+    def get_inertia_matrix(self):
+        return np.array([[self.Ixx,        0,        0],
+                         [       0, self.Iyy,        0],
+                         [       0,        0, self.Izz]])
+
 def quaternion_to_euler(qw, qx, qy, qz):
     """From a quaternion to aircraft euler angles.
     
@@ -76,6 +110,13 @@ def quaternion_to_euler(qw, qx, qy, qz):
     
     #return (phi, theta, psi)
     return np.array((phi, theta, psi), dtype=np.float64)
+
+
+def rosbag_index_to_time_vector(index):
+    rbts2s = 10 ** -9
+    tvec = (index - subset)*rbts2s
+    tvec = tvec.astype('float')
+    return tvec
 
 
 def read_blackbird_test(maneuver, yawdirection, speed):
@@ -264,8 +305,8 @@ def imu_installation_correction(test):
     test.loc[:,['ax_[m/s2]', 'ay_[m/s2]']] = test.loc[:,['ay_[m/s2]', 'ax_[m/s2]']].values
     test.loc[:,['ax_[m/s2]']] = -1.*test.loc[:,['ax_[m/s2]']].values
     #Gyroscope
-    test.loc[:,['omegax_[dps]', 'omegay_[dps]']] = test.loc[:,['omegax_[dps]',
-                                                               'omegay_[dps]']].values
+    test.loc[:,['omegax_[dps]', 'omegay_[dps]']] = test.loc[:,['omegay_[dps]',
+                                                               'omegax_[dps]']].values
     test.loc[:,['omegax_[dps]']] = -1.*test.loc[:,['omegax_[dps]']].values
     return test
 
@@ -358,6 +399,7 @@ def inertial_quaternion_derivatives_estimation(test):
     tvec = tvec.astype('float')
     
     #Iterate through positions
+    df = None
     for axis in ['w', 'x', 'y', 'z']:
         #Get values
         q = subset[('q' + axis)].values
@@ -369,12 +411,17 @@ def inertial_quaternion_derivatives_estimation(test):
                 ('qdot' + axis),
                 ('qdotdot' + axis)]
         data = {cols[0] : q_est[:,0], cols[1] : q_est[:,1], cols[2] : q_est[:,2]}
-        df = pd.DataFrame(data, columns=cols, index=ind)
-        test = pd.concat([test, df], sort=True)
+        subdf = pd.DataFrame(data, columns=cols)
+        if df is None:
+            df = subdf
+        else:
+            df = pd.concat([df, subdf], axis=1)
+    df.index = ind
+    test = pd.concat([test, df], sort=True)
         
     return test
 
-def body_angular_derivative_estimate(test):
+def body_angular_derivative_estimate(test, flag_W=None):
     """
     Input:
         * test: Blackbird dataset in a pandas dataframe with the first and second time derivative of the quaternion vector.
@@ -386,11 +433,13 @@ def body_angular_derivative_estimate(test):
     
     #Getting quaternions, 1st time derivative, and time vector
     q = test[['qw_est', 'qx_est', 'qy_est', 'qz_est']].dropna()
+    ind = q.index
     t_q = q.index
     t_q = (t_q - test.index[0]) * rbts2s
     t_q = t_q.astype('float')
     q = q.values
     qdot = test[['qdotw', 'qdotx', 'qdoty', 'qdotz']].dropna().values
+    qdotdot = test[['qdotdotw', 'qdotdotx', 'qdotdoty', 'qdotdotz']].dropna().values
     
     #Getting IMU values and time derivative
     omega_imu = test[['omegax_[dps]', 
@@ -410,14 +459,15 @@ def body_angular_derivative_estimate(test):
         omega_qa[i] = quaternions.Omega_from_quaternions_alt(q[i], qdot[i])
         
     #Iterate through IMU series determining errors
-    N = len(t_imu)
+    N = float(len(t_imu))
     M = len(t_q)
     e1 = 0.
     e2 = 0.
     qi = 0
-    for i in range(N):
+    
+    for i in range(int(N)):
         t = t_imu[i]
-        while t_q[qi] < t and qi < M:
+        while t_q[qi] < t and qi < M - 1:
             qi += 1
         #End conditions of quaternion index
         if qi == M:
@@ -440,14 +490,41 @@ def body_angular_derivative_estimate(test):
     
     # Determine best solution
     sol = None
-    if e1 <= e2:
+    if (e1 <= e2 and flag_W is None) or flag_W:
         sol = 1
     else:
         sol = 2
         omega_q = omega_qa
         
-    #Get omdega dot estimates
-    omegadot = np.zeros((M,3))
+    #Get angular acceleration estimates using same transform as quaternion -> omega
+    omegadot_q = np.zeros((M,3))
     for i in range(M):
-        if sol == 1:
-            omegadot[i] = quaternions.omegadot_from_quaternions(
+        if (sol == 1 and flag_W is None) or flag_W:
+            omegadot_q[i] = quaternions.Omega_from_quaternions(q[i], qdotdot[i])
+        else:
+            omegadot_q[i] = quaternions.Omega_from_quaternions_alt(q[i], qdotdot[i])
+            
+    # Merge the angularderivatives into the dataset
+    df_omega = pd.DataFrame(data=omega_q,
+                            columns=['omegax_qest',
+                                     'omegay_qest',
+                                     'omegaz_qest'],
+                            index=ind)
+    df_omegadot = pd.DataFrame(data=omegadot_q,
+                               columns=['omegadotx_qest',
+                                        'omegadoty_qest',
+                                        'omegadotz_qest'],
+                               index=ind)
+    test = pd.concat([test, df_omega, df_omegadot], sort=True)
+    
+    return test
+
+def quaternion_reference_correction(test):
+    """Corrects a 90 degree rotation that for the quaternion reference frame"""
+    for prefix in ['omega', 'omegadot']:
+        test.loc[:,[prefix + 'x_qest',
+                    prefix + 'y_qest']] = test.loc[:,[prefix + 'x_qest',
+                                                      prefix + 'y_qest']].values
+        test.loc[:,[prefix + 'x_qest']] = -1.*test.loc[:,[prefix + 'x_qest']].values
+
+    return test

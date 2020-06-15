@@ -171,7 +171,10 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
             theta = np.matmul(np.linalg.inv(X), np.transpose(y[:(m+1)]))
 
         dmdxm[i,:] = np.transpose(theta)*diff_multipliers
+
     #Beginning and ending sections
+    """
+    # Pretty sure extrapolation with non-zero derivatives is throwing things off
     for (i0, index) in zip([hs, n-hs-1], [list(range(hs)), list(range(n-hs,n))]):
         
         t0        = tvec[i0] #zeroth time
@@ -185,7 +188,13 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
         t_train = tvec[i_train] - t0
         x_train = xvec[i_train]
         dmdxm[index,:] = lsee_polynomial_extrapolate(t_train, x_train, t_predict, m)
-
+    """
+    #Enforcing zero order hold for edge sections - 6/7/2020
+    # Beginning
+    for i in range(hs):
+        dmdxm[i,:] = dmdxm[hs,:]
+    for i in range(n-hs, n):
+        dmdxm[i,:] = dmdxm[n - hs - 1,:]
     return dmdxm
 
 
