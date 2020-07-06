@@ -331,13 +331,47 @@ def inertial_position_derivatives_estimation(test):
         #Get values
         p = subset[('p' + axis + '_[m]')].values
         #Do estimation
-        p_est = dsp.central_sg_filter(tvec, p, m=3, window=27)
+        p_est = dsp.central_sg_filter(tvec, p, m=4, window=27)
         
         #Store values in a new dataframe
         cols = [('p' + axis + '_[m]_est'),
                 ('v' + axis + '_I_[m/s]'),
                 ('a' + axis + '_I_[m/s2]')]
         data = {cols[0] : p_est[:,0], cols[1] : p_est[:,1], cols[2] : p_est[:,2]}
+        df = pd.DataFrame(data, columns=cols)
+        df.index = ind
+        test = pd.concat([test, df], sort=True)
+        
+    return test
+
+def gyroscope_derivatives_estimation(test):
+    """
+    Input:
+        * test: Blackbird dataset in a pandas dataframe
+    Output:
+        * test: Dataset with added angular velocity and accelerations estimates using a SG filter and the gyroscope data
+    """
+    #Get columns of interest and indexes
+    subset = test[['omegax_[dps]', 'omegay_[dps]', 'omegaz_[dps]']].dropna()
+    ind = subset.index
+    
+    #Time vector for SG
+    rbts2s = 10 ** -9
+    tvec = (subset.index - subset.index[0])*rbts2s
+    tvec = tvec.astype('float')
+    
+    #Iterate through positions
+    for axis in ['x', 'y', 'z']:
+        #Get values
+        omega = subset[('omega' + axis + '_[dps]')].values
+        #Do estimation
+        omega_est = dsp.central_sg_filter(tvec, omega, m=3, window=27)
+        
+        #Store values in a new dataframe
+        cols = [('omega' + axis + '_est'),
+                ('omegadot' + axis + '_est')]
+        data = {cols[0] : omega_est[:,0],
+                cols[1] : omega_est[:,1]}
         df = pd.DataFrame(data, columns=cols)
         df.index = ind
         test = pd.concat([test, df], sort=True)
@@ -421,7 +455,7 @@ def inertial_quaternion_derivatives_estimation(test):
         
     return test
 
-def body_angular_derivative_estimate(test, flag_W=None):
+def body_quaternion_angular_derivative_estimate(test, flag_W=None):
     """
     Input:
         * test: Blackbird dataset in a pandas dataframe with the first and second time derivative of the quaternion vector.
@@ -527,4 +561,49 @@ def quaternion_reference_correction(test):
                                                       prefix + 'y_qest']].values
         test.loc[:,[prefix + 'x_qest']] = -1.*test.loc[:,[prefix + 'x_qest']].values
 
+    return test
+
+def motor_scaling(test):
+    """Scales motor rpms to the median"""
+    medians = np.nanmedian(test[['rpm1', 'rpm2', 'rpm3', 'rpm4']].values, axis=0)
+    overall_median = np.median(medians)
+    for i in range(4):
+        col = "rpm" + str(i+1)
+        test.loc[:, [col]].values = test.loc[:, [col]].values*overall_median/medians[i]
+    return test
+
+def motor_rates(test):
+    """Applies an Savitzky-Golaz filter to the motor angular speeds"""
+    #Get columns of interest and indexes
+    subset = test[['rpm1', 'rpm2', 'rpm3', 'rpm4']].dropna()
+    ind = subset.index
+    
+    #Time vector for SG
+    rbts2s = 10 ** -9
+    tvec = (subset.index - subset.index[0])*rbts2s
+    tvec = tvec.astype('float')
+    
+    # Unit conversion
+    rpm2rps = 2.*np.pi/60.
+    
+    #Iterate through positions
+    df = None
+    for i in range(4):
+        #Get values
+        m_omega = subset['rpm' + str(i+1)].values
+        #Do estimation
+        momega_est = dsp.central_sg_filter(tvec, m_omega, m=2, window=51)
+        
+        #Store values in a new dataframe
+        cols = [('motor' + i + '_[rps]_est'),
+                ('motor' + i + 'dot_[rps2]')]
+        data = {cols[0] : momega_est[:,0]*rpm2rps, cols[1] : momega_est[:,1]*rpm2rps}
+        subdf = pd.DataFrame(data, columns=cols)
+        if df is None:
+            df = subdf
+        else:
+            df = pd.concat([df, subdf], axis=1)
+    df.index = ind
+    test = pd.concat([test, df], sort=True)
+        
     return test

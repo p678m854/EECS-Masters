@@ -246,3 +246,36 @@ def FFT(tvec, X, Fs):
         #NfxM = NfxM + (1xNf)'*(1xM)
 
     return (fvec, Xf)
+
+"""
+Traditional filters
+"""
+
+def adaptive_low_pass(t, x, fc):
+    """Adaptive timestep low pass filter
+    
+    Inputs:
+        t = N time series vector with non-uniform differences
+        x = NxM state vector
+        fc = cut-off frequency
+    
+    Outputs:
+        y = NxM smoothed state vector
+    """
+    # Preallocate output vector
+    y = np.zeros(x.shape)
+    # Cut off angular rate
+    omega_c = 2.*np.pi*fc
+    # Time step vector
+    dt = np.zeros(t.shape)
+    dt[1:] = t[1:] - t[:-1]
+    # Calculate the weights
+    alpha = omega_c*dt/(omega_c*dt + 1)
+    # Iterate through time
+    for i in range(t.shape[0]):
+        if i == 0:
+            # first point case
+            y[0] = x[0]
+        else:
+            y[i] = (1 - alpha[i])*y[i-1] + alpha[i]*x[i]
+    return y
