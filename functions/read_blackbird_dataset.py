@@ -35,6 +35,7 @@ class BlackbirdVehicle():
     
     """
     def __init__(self):
+        self.g = 9.81 # [m/s2]
         self.mass = 0.915 # [kg]
         self.Ixx = 4.9*.01 # [kg m^2] although MIT says [kg m^-2]
         self.Iyy = 4.9*.01 # [kg m^2] although MIT says [kg m^-2]
@@ -308,9 +309,9 @@ def imu_installation_correction(test):
     test.loc[:,['omegax_[dps]', 'omegay_[dps]']] = test.loc[:,['omegay_[dps]',
                                                                'omegax_[dps]']].values
     test.loc[:,['omegax_[dps]']] = -1.*test.loc[:,['omegax_[dps]']].values
-    return test
+    # return test
 
-def inertial_position_derivatives_estimation(test):
+def inertial_position_derivatives_estimation(test, flag_parallel=True):
     """
     Input:
         * test: Blackbird dataset in a pandas dataframe
@@ -320,31 +321,42 @@ def inertial_position_derivatives_estimation(test):
     #Get columns of interest and indexes
     subset = test[['px_[m]', 'py_[m]', 'pz_[m]']].dropna()
     ind = subset.index
-    
+
     #Time vector for SG
     rbts2s = 10 ** -9
     tvec = (subset.index - subset.index[0])*rbts2s
     tvec = tvec.astype('float')
-    
+
+    data = dict()
+    columns_list = []
     #Iterate through positions
     for axis in ['x', 'y', 'z']:
         #Get values
         p = subset[('p' + axis + '_[m]')].values
         #Do estimation
-        p_est = dsp.central_sg_filter(tvec, p, m=4, window=27)
-        
+        if flag_parallel:
+            p_est = dsp.central_sg_filter_parallel(tvec, p, m=4, window=27)
+        else:
+            p_est = dsp.central_sg_filter(tvec, p, m=4, window=27)
+
         #Store values in a new dataframe
         cols = [('p' + axis + '_[m]_est'),
                 ('v' + axis + '_I_[m/s]'),
                 ('a' + axis + '_I_[m/s2]')]
-        data = {cols[0] : p_est[:,0], cols[1] : p_est[:,1], cols[2] : p_est[:,2]}
-        df = pd.DataFrame(data, columns=cols)
-        df.index = ind
-        test = pd.concat([test, df], sort=True)
+        for i in range(3):
+            data[cols[i]] = p_est[:, i]
+        #data = {cols[0] : p_est[:,0], cols[1] : p_est[:,1], cols[2] : p_est[:,2]}
+        columns_list = columns_list + cols
         
+    df = pd.DataFrame(data, columns=columns_list)
+    df.index = ind
+
+    # Merge 
+    test = pd.concat([test, df], sort=True)
+
     return test
 
-def gyroscope_derivatives_estimation(test):
+def gyroscope_derivatives_estimation(test, flag_parallel=True):
     """
     Input:
         * test: Blackbird dataset in a pandas dataframe
@@ -354,27 +366,34 @@ def gyroscope_derivatives_estimation(test):
     #Get columns of interest and indexes
     subset = test[['omegax_[dps]', 'omegay_[dps]', 'omegaz_[dps]']].dropna()
     ind = subset.index
-    
+
     #Time vector for SG
     rbts2s = 10 ** -9
     tvec = (subset.index - subset.index[0])*rbts2s
     tvec = tvec.astype('float')
-    
+
+    data = dict()
+    columns_list = []
     #Iterate through positions
     for axis in ['x', 'y', 'z']:
         #Get values
         omega = subset[('omega' + axis + '_[dps]')].values
         #Do estimation
-        omega_est = dsp.central_sg_filter(tvec, omega, m=3, window=27)
+        if flag_parallel:
+            omega_est = dsp.central_sg_filter_parallel(tvec, omega, m=3, window=27)
+        else:
+            omega_est = dsp.central_sg_filter(tvec, omega, m=3, window=27)
         
         #Store values in a new dataframe
         cols = [('omega' + axis + '_est'),
                 ('omegadot' + axis + '_est')]
-        data = {cols[0] : omega_est[:,0],
-                cols[1] : omega_est[:,1]}
-        df = pd.DataFrame(data, columns=cols)
-        df.index = ind
-        test = pd.concat([test, df], sort=True)
+        for i in range(2):
+            data[cols[i]] = omega_est[:, i]
+        columns_list = columns_list + cols
+        
+    df = pd.DataFrame(data, columns=columns_list)
+    df.index = ind
+    test = pd.concat([test, df], sort=True)
         
     return test
 
@@ -385,7 +404,7 @@ def consistent_quaternions(test):
     Output:
         * test: Dataset with added velocity/acceleration estimates using a SG filter and the quaternions
     """
-    
+    data = dict()
     for cols in [['qw', 'qx', 'qy', 'qz'], ['qwr', 'qxr', 'qyr', 'qzr']]:
         #get quaternions and their indexes
         subset = test[cols].dropna()
@@ -413,10 +432,10 @@ def consistent_quaternions(test):
         df = pd.DataFrame(q, columns=cols, index = ind)
         test = test.drop(cols, axis=1)
         test = pd.concat([test, df], sort=True)
-    
+
     return test
     
-def inertial_quaternion_derivatives_estimation(test):
+def inertial_quaternion_derivatives_estimation(test, flag_parallel=True):
     """
     Input:
         * test: Blackbird dataset in a pandas dataframe
@@ -438,7 +457,10 @@ def inertial_quaternion_derivatives_estimation(test):
         #Get values
         q = subset[('q' + axis)].values
         #Do estimation
-        q_est = dsp.central_sg_filter(tvec, q, m=5, window=27)
+        if flag_parallel:
+            q_est = dsp.central_sg_filter_parallel(tvec, q, m=5, window=27)
+        else:
+            q_est = dsp.central_sg_filter(tvec, q, m=5, window=27)
         
         #Store values in a new dataframe
         cols = [('q' + axis + '_est'),
@@ -539,6 +561,16 @@ def body_quaternion_angular_derivative_estimate(test, flag_W=None):
             omegadot_q[i] = quaternions.Omega_from_quaternions_alt(q[i], qdotdot[i])
             
     # Merge the angularderivatives into the dataset
+    df = pd.DataFrame(data=np.concatenate((omega_q, omegadot_q), axis=1),
+                      columns=['omegax_qest',
+                               'omegay_qest',
+                               'omegaz_qest',
+                               'omegadotx_qest',
+                               'omegadoty_qest',
+                               'omegadotz_qest'],
+                      index=ind)
+    test = pd.concat([test, df], sort=True)
+    """
     df_omega = pd.DataFrame(data=omega_q,
                             columns=['omegax_qest',
                                      'omegay_qest',
@@ -550,8 +582,9 @@ def body_quaternion_angular_derivative_estimate(test, flag_W=None):
                                         'omegadotz_qest'],
                                index=ind)
     test = pd.concat([test, df_omega, df_omegadot], sort=True)
-    
+    """
     return test
+
 
 def quaternion_reference_correction(test):
     """Corrects a 90 degree rotation that for the quaternion reference frame"""
@@ -563,16 +596,215 @@ def quaternion_reference_correction(test):
 
     return test
 
-def motor_scaling(test):
+
+def cross_product_skew_symmetric_matrix(x, y, z):
+    CROSS = np.array([[0, -y, z],
+                      [y, 0, -x],
+                      [-z, x, 0]])
+    return CROSS
+
+
+def quaternion_body_acceleration(test):
+    # Constants
+    vehicle = BlackbirdVehicle()
+    g = vehicle.g
+    Inertia = vehicle.get_inertia_matrix()
+    Iinv = np.linalg.inv(Inertia)
+    
+    # Get quaternion values
+    quaternions_inertial_df = test[['px_[m]_est',
+                                    'py_[m]_est',
+                                    'pz_[m]_est',
+                                    'vx_I_[m/s]',
+                                    'vy_I_[m/s]',
+                                    'vz_I_[m/s]',
+                                    'ax_I_[m/s2]',
+                                    'ay_I_[m/s2]',
+                                    'az_I_[m/s2]']].dropna()
+
+    quaternions_df = test[['qw_est', 'qx_est', 'qy_est', 'qz_est']].dropna()
+    
+    # Get Body frame measurements
+    quaternions_body_df = test[['omegax_qest',
+                                'omegay_qest',
+                                'omegaz_qest',
+                                'omegadotx_qest',
+                                'omegadoty_qest',
+                                'omegadotz_qest']].dropna()
+
+    # Get a spare index
+    q_index = quaternions_body_df.index
+    
+    # Reset Index for iterrows
+    quaternions_inertial_df = quaternions_inertial_df.reset_index()
+    quaternions_df = quaternions_df.reset_index()
+    quaternions_body_df = quaternions_body_df.reset_index()
+
+    # Preallocate body value matrices matrix
+    V_B = np.zeros((len(quaternions_body_df.index), 3)) # Vehicle velocity in body frame
+    a_B = np.zeros((len(quaternions_body_df.index), 3)) # Used against IMU to benchmark quaternion based accuracy
+    omegadot_B = np.zeros((len(quaternions_body_df.index), 3))
+
+    # Inertial frame acceleration in body frame. All body effects sum to this
+    a_I_B = np.zeros((len(quaternions_body_df.index), 3))
+    a_transport_B = np.zeros((len(quaternions_body_df.index), 3)) # omega cross v from transport equation
+    a_gravity_B = np.zeros((len(quaternions_body_df.index), 3)) # Gravity in body frame
+
+    # Inertial frame rotational derivative in body. All body effects sum to this
+    omegadot_I_B = np.zeros((len(quaternions_body_df.index), 3))
+    # omega cross (I times omega) from transport equation
+    omegadot_transport_B = np.zeros((len(quaternions_body_df.index), 3)) 
+
+    # Transform Inertial frame into Body Frame
+    for i in range(len(quaternions_inertial_df.index)):
+        # Get Rotation matrix from quaternions
+        qw = quaternions_df.loc[i, 'qw_est']
+        qx = quaternions_df.loc[i, 'qx_est']
+        qy = quaternions_df.loc[i, 'qy_est']
+        qz = quaternions_df.loc[i, 'qz_est']
+        R = quaternions.Rmatrix_from_quaternions(qw, qx, qy, qz)
+
+        # Get inertial frame velocity and acceleration
+        vx = quaternions_inertial_df.loc[i, 'vx_I_[m/s]']
+        vy = quaternions_inertial_df.loc[i, 'vy_I_[m/s]']
+        vz = quaternions_inertial_df.loc[i, 'vz_I_[m/s]']
+        ax = quaternions_inertial_df.loc[i, 'ax_I_[m/s2]']
+        ay = quaternions_inertial_df.loc[i, 'ay_I_[m/s2]']
+        az = quaternions_inertial_df.loc[i, 'az_I_[m/s2]']
+
+        # Get rotation rates and accelerations from body frame
+        omegax = quaternions_body_df.loc[i, 'omegax_qest']
+        omegay = quaternions_body_df.loc[i, 'omegay_qest']
+        omegaz = quaternions_body_df.loc[i, 'omegaz_qest']
+        omegadotx = quaternions_body_df.loc[i, 'omegadotx_qest']
+        omegadoty = quaternions_body_df.loc[i, 'omegadoty_qest']
+        omegadotz = quaternions_body_df.loc[i, 'omegadotz_qest']
+
+        # Get cross product equivalent matrix
+        OmegaCross = cross_product_skew_symmetric_matrix(omegax, omegay, omegaz)
+
+        # Transform velocity from inertial into body
+        V_I = np.array([vx, vy, vz]).T
+        V_B[i] = np.matmul(R, V_I).T
+
+        # Transform translational acceleration (a_B = a_I|B - omega cross v_B)
+        a_I = np.array([ax, ay, az]).T
+        a_I_B[i] = np.matmul(R, a_I).T
+        a_transport_B[i] = np.matmul(OmegaCross, V_B[i]).T
+        a_B[i] = a_I_B[i] - a_transport_B[i]
+        a_gravity_B[i] = np.matmul(R, np.array([0, 0, g]).T)
+
+        # Transform rotational acceleration (alpha_B = alpha_I|B - Iinv (omega cross (I omega)))
+        omega = np.array([omegax, omegay, omegaz]).T
+        omegadot_I_B[i] = np.array([omegadotx, omegadoty, omegadotz]).T
+        omegadot_transport_B[i] = np.matmul(Iinv, np.matmul(OmegaCross, np.matmul(Inertia, omega)))
+        omegadot_B[i] = omegadot_I_B[i] - omegadot_transport_B[i]
+
+    data = {
+        'vx_B_[m/s]' : V_B[:, 0],
+        'vy_B_[m/s]' : V_B[:, 1],
+        'vz_B_[m/s]' : V_B[:, 2],
+        'ax_B_[m/s2]' : a_B[:, 0],
+        'ay_B_[m/s2]' : a_B[:, 1],
+        'az_B_[m/s2]' : a_B[:, 2],
+        'ax_g|B_[m/s2]' : a_gravity_B[:, 0],
+        'ay_g|B_[m/s2]' : a_gravity_B[:, 1],
+        'az_g|B_[m/s2]' : a_gravity_B[:, 2],
+        'omegaxdot_B_[rps]' : omegadot_B[:, 0],
+        'omegaydot_B_[rps]' : omegadot_B[:, 1],
+        'omegazdot_B_[rps]' : omegadot_B[:, 2]
+    }
+    df = pd.DataFrame(data, columns=[
+        'vx_B_[m/s]',
+        'vy_B_[m/s]',
+        'vz_B_[m/s]',
+        'ax_B_[m/s2]',
+        'ay_B_[m/s2]',
+        'az_B_[m/s2]',
+        'ax_g|B_[m/s2]',
+        'ay_g|B_[m/s2]',
+        'az_g|B_[m/s2]',
+        'omegaxdot_B_[rps]',
+        'omegaydot_B_[rps]',
+        'omegazdot_B_[rps]'
+    ])
+    df.index = q_index
+    test = pd.concat([test, df], sort=True)
+    return test
+
+
+def on_ground(test):
+    """Puts in a boolean vector """
+    # Look at rpms to get when motor turns on
+    rpm1 = test['rpm1']
+    rpm1 = rpm1[rpm1 > 0.]
+    # get important times
+    t_motors_start = rpm1.index[0]
+    t_midpoint = (test.index.max() + test.index.min())/2.
+
+    # Z inerital frame measurements to determine threshold
+    zinertial = test['pz_[m]'].dropna()
+    zfinal = zinertial.values[-1]
+    delta_z = 0.00025
+    zthreshold = zfinal - delta_z
+    
+    # time sections for on ground
+    tvec = zinertial.index
+    # tvec = tvec.astype('int') # will be doing seconds here
+    on_ground = (tvec.values > t_midpoint) & (zinertial.values > zthreshold)
+    # Starting is when previous index was false and current is true
+    # Ending is when next index was false and current is true
+    tground_start = (~on_ground[:-1])
+    tground_end = (on_ground[:-1])
+    # print(tground_start.shape)
+    for i in range(tground_start.shape[0]):
+        tground_start[i] = tground_start[i] and on_ground[i+1]
+        tground_end[i] = tground_end[i] and not on_ground[i+1]
+    
+    # Appending the end
+    tground_start = np.concatenate((tground_start, np.array([False])))
+    tground_end = np.concatenate((tground_end, np.array([True])))
+
+    # getting starting times
+    tstarts = list(tvec[tground_start])
+    tends = list(tvec[tground_end])
+    Nhops = len(tstarts)
+    
+    assert len(tstarts) == len(tends)
+    
+    # put in the column
+    test['is_flying'] = True
+    index = test.index
+    for i in range(len(index)):
+        ind = index[i]
+        # Before motors turned on
+        if ind < t_motors_start:
+            test.loc[ind, 'is_flying'] = False
+        # Later half time
+        elif ind > t_midpoint:
+            # if quadcopter is on the ground.
+            for j in range(Nhops):
+                if (ind >= tstarts[j]) & (ind <= tends[j]):
+                    test.loc[ind, 'is_flying'] = False
+
+    # return the dataframe
+    return test
+
+
+def motor_scaling(test, print_flag=False):
     """Scales motor rpms to the median"""
     medians = np.nanmedian(test[['rpm1', 'rpm2', 'rpm3', 'rpm4']].values, axis=0)
     overall_median = np.median(medians)
     for i in range(4):
         col = "rpm" + str(i+1)
-        test.loc[:, [col]].values = test.loc[:, [col]].values*overall_median/medians[i]
+        test.loc[:, [col]] = test.loc[:, [col]].values*overall_median/medians[i]
+    if print_flag:
+        for i, m in enumerate(medians):
+            print("Motor %i: %.1f [rpm]" % (i+1, m))
+        print("Overall: %.1f [rpm]" % overall_median)
     return test
 
-def motor_rates(test):
+def motor_rates(test, flag_parallel=True):
     """Applies an Savitzky-Golaz filter to the motor angular speeds"""
     #Get columns of interest and indexes
     subset = test[['rpm1', 'rpm2', 'rpm3', 'rpm4']].dropna()
@@ -592,11 +824,14 @@ def motor_rates(test):
         #Get values
         m_omega = subset['rpm' + str(i+1)].values
         #Do estimation
-        momega_est = dsp.central_sg_filter(tvec, m_omega, m=2, window=51)
+        if flag_parallel:
+            momega_est = dsp.central_sg_filter_parallel(tvec, m_omega, m=2, window=51)
+        else:
+            momega_est = dsp.central_sg_filter(tvec, m_omega, m=2, window=51)
         
         #Store values in a new dataframe
-        cols = [('motor' + i + '_[rps]_est'),
-                ('motor' + i + 'dot_[rps2]')]
+        cols = [('motor' + str(i) + '_[rps]_est'),
+                ('motor' + str(i) + 'dot_[rps2]')]
         data = {cols[0] : momega_est[:,0]*rpm2rps, cols[1] : momega_est[:,1]*rpm2rps}
         subdf = pd.DataFrame(data, columns=cols)
         if df is None:

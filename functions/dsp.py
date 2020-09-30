@@ -7,6 +7,7 @@ Summary:
 File of personally written functions for Digital Signal Pocessing used to estimate values or derivatives. Made because I was sick of libraries using uniform interval theory so I made functions to handle nonuniform intervals.
 """
 
+import numba
 import numpy as np
 import math
 import copy
@@ -27,7 +28,8 @@ def get_weights(n, h):
         for j in range(m):
             A[i,j] = (h[j][0] ** i)/float(math.factorial(i))
     return np.matmul(np.linalg.inv(A), w)
-    
+
+
 def nth_numerical_derivative(f, x, n=1, order=1, method='central'):
     """
     Summary: Finds the nth derivative of the state vector f along the input vector x with an order of m. Does either forward,
@@ -194,6 +196,55 @@ def central_sg_filter(tvec, xvec, m=5, window=13):
     for i in range(hs):
         dmdxm[i,:] = dmdxm[hs,:]
     for i in range(n-hs, n):
+        dmdxm[i,:] = dmdxm[n - hs - 1,:]
+    return dmdxm
+
+
+numba.njit(parallel=True)
+def central_sg_filter_parallel(tvec, xvec, m=5, window=13):
+    """
+    Same Savitzky-Golaz but made to run on parallel cpus
+    """
+    
+    #Initialize vectors
+    n     = tvec.shape[0] #Length of x vector
+    dmdxm = np.zeros((n,m+1)) #n x (m+1) matrix of the ith derivative
+    #print(dmdxm.size())
+    hs    = int((window - 1)/2) #Half window size
+    
+    #Conversion between polynomial coefficients and the derivatives
+    diff_multipliers = np.ones(m+1)
+    mfact = math.factorial(m)
+    for i in numba.prange(m+1):
+        diff_multipliers[i] = math.factorial(i)
+    
+    #Middle sections (i.e. central estimations)
+    for i in numba.prange(hs, n-hs):
+        tlocal = tvec[i-hs:i+hs+1] - tvec[i]
+        y      = xvec[i-hs:i+hs+1] #1 x ws
+        X = np.outer(tlocal, np.ones((m+1,))) #ws x (m+1)
+        # creating rows of [t^0, t^1, ..., t^m]
+        for j in range(m+1):
+            X[:,j] = X[:,j] ** j
+        Xt = np.transpose(X) #(m+1) x ws
+
+        try:
+            #Least squares solution (m+1)x1
+            XtXinv = np.linalg.inv(np.matmul(Xt,X))
+            theta = np.matmul(XtXinv, np.matmul(Xt, np.transpose(y)))
+        except np.linalg.LinAlgError as err:
+            #exact solution
+            X = X[:(m+1), :(m+2)] #Get a square matrix
+            theta = np.matmul(np.linalg.inv(X), np.transpose(y[:(m+1)]))
+
+        dmdxm[i,:] = np.transpose(theta)*diff_multipliers
+
+    #Beginning and ending sections
+    #Enforcing zero order hold for edge sections - 6/7/2020
+    # Beginning
+    for i in numba.prange(hs):
+        dmdxm[i,:] = dmdxm[hs,:]
+    for i in numba.prange(n-hs, n):
         dmdxm[i,:] = dmdxm[n - hs - 1,:]
     return dmdxm
 
