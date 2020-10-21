@@ -830,8 +830,8 @@ def motor_rates(test, flag_parallel=True):
             momega_est = dsp.central_sg_filter(tvec, m_omega, m=2, window=51)
         
         #Store values in a new dataframe
-        cols = [('motor' + str(i) + '_[rps]_est'),
-                ('motor' + str(i) + 'dot_[rps2]')]
+        cols = [('motor' + str(i+1) + '_[rps]_est'),
+                ('motor' + str(i+1) + 'dot_[rps2]')]
         data = {cols[0] : momega_est[:,0]*rpm2rps, cols[1] : momega_est[:,1]*rpm2rps}
         subdf = pd.DataFrame(data, columns=cols)
         if df is None:
@@ -842,3 +842,96 @@ def motor_rates(test, flag_parallel=True):
     test = pd.concat([test, df], sort=True)
         
     return test
+
+def scale_and_filter_pwms(test_df):
+    """Rescales PWM to the median and applies a low pass filter and then a moving average"""
+    #Get columns of interest and indexes
+    subset = test_df[['PWM1', 'PWM2', 'PWM3', 'PWM4']].dropna()
+    ind = subset.index
+    
+    #Time vector
+    rbts2s = 10 ** -9
+    tvec = (subset.index - subset.index[0])*rbts2s
+    tvec = tvec.astype('float')
+    
+    pwms_unf = subset.values
+    pwms = subset.values - 1000.  # Subtracting PWM start offset
+    
+    # Rescale
+    medians = np.nanmedian(pwms, axis=0)
+    median = np.median(medians)
+    
+    # Apply adaptive low pass filter
+    for i in range(4):
+        scale_ind = pwms[:,i] > 100
+        tvec_manipulate = tvec[scale_ind]
+        pwms[scale_ind, i] = dsp.moving_average(
+            tvec_manipulate, dsp.adaptive_low_pass(
+                tvec_manipulate,
+                pwms[scale_ind, i]*median/medians[i],
+                fc=2.5),
+            window=2
+        )
+    
+    # Adding back in PWM offset
+    pwms = pwms + 1000.
+    
+    # Reintegrate into test dataframe
+    df = pd.DataFrame(
+        {
+            'PWM1_f': pwms[:, 0], 'PWM2_f': pwms[:,1], 'PWM3_f': pwms[:,2], 'PWM4_f': pwms[:,3],
+            'PWM1': pwms_unf[:, 0], 'PWM2': pwms_unf[:,1], 'PWM3': pwms_unf[:,2], 'PWM4': pwms_unf[:,3]
+        },
+        columns=[
+            'PWM1_f', 'PWM2_f', 'PWM3_f', 'PWM4_f',
+            'PWM1', 'PWM2', 'PWM3', 'PWM4'
+        ]
+    )
+    df.index = ind
+    test_df = test_df.drop(['PWM1', 'PWM2', 'PWM3', 'PWM4'], axis=1)
+    test_df = pd.concat([test_df, df], sort=True)
+    
+    return test_df
+
+def detrend_pwm(test_df):
+    """Removes the linear trend due to battery usage in PWM signals"""
+    # Getting dataframe of interest and removing from test dataframe
+    cols = ['PWM1', 'PWM2', 'PWM3', 'PWM4']
+    pwms = test_df[cols].dropna()
+    ind = pwms.index
+    test_df = test_df.drop(cols, axis=1)
+    
+    #Time vector
+    rbts2s = 10 ** -9
+    tvec = (pwms.index - pwms.index[0])*rbts2s
+    tvec = tvec.astype('float').values
+    
+    # Get the mean of all pwm signals
+    pwms = pwms.values
+    mpwms = np.mean(pwms, axis=1)
+    Q2 = np.median(mpwms)
+    Q1 = np.median(mpwms[mpwms <= Q2])
+    Q3 = np.median(mpwms[mpwms >= Q2])
+    pwms_index = np.logical_and(mpwms >= Q1, mpwms <= Q3)
+    mpwms = mpwms[pwms_index]
+    
+    # Do the linear regession
+    N = mpwms.shape[0]
+    Y = mpwms.reshape((N,1))
+    X = np.concatenate((tvec[pwms_index].reshape((N,1)), np.ones((N,1))), axis=1)
+    theta = np.matmul(np.linalg.inv(np.matmul(X.transpose(), X)), np.matmul(X.transpose(), Y))
+    
+    # Remove linear trend from regions where 
+    trend = theta[0, 0]
+    trend_comp = -trend*(tvec.reshape((tvec.shape[0], 1)))
+    comp_ind = pwms > 1100.  # Only correct PWMS when above standby
+    pwms[comp_ind] = (pwms + trend_comp)[comp_ind]
+    
+    df = pd.DataFrame(
+        {cols[0]: pwms[:, 0], cols[1]: pwms[:, 1], cols[2]: pwms[:, 2], cols[3]: pwms[:, 3]},
+        columns=cols
+    )
+    df.index = ind
+    test_df = pd.concat([test_df, df], sort=True)
+    
+    return test_df

@@ -330,3 +330,28 @@ def adaptive_low_pass(t, x, fc):
         else:
             y[i] = (1 - alpha[i])*y[i-1] + alpha[i]*x[i]
     return y
+
+def moving_average(tvec, X, window):
+    """Centered moving average with a specified window size.
+    
+    Args:
+        tvec (np.ndarray): N time array
+        X (np.ndarray): NxM state array
+        window (float): total span of the time window
+    
+    Returns:
+        X_f (np.ndarray): Filtered NxM state array
+    """
+    
+    X_f = np.zeros(X.shape)
+    half_window = window/2.
+    
+    for i in range(tvec.shape[0]):
+        t_sample = tvec[i]
+        kernel_values = X[np.logical_and(
+            tvec >= t_sample - half_window,
+            tvec <= t_sample + half_window
+        )]
+        X_f[i] = np.mean(kernel_values, axis=0)
+    
+    return X_f
