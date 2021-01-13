@@ -89,3 +89,7 @@ target/
 .mypy_cache/
 models/optcon_model_weights.keras
 *.keras
+adaptive_regularization/__init__.py
+adaptive_regularization/datasets.py
+adaptive_regularization/model.py
+adaptive_regularization/train_eval.py
