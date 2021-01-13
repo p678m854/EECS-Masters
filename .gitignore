@@ -93,3 +93,15 @@ adaptive_regularization/__init__.py
 adaptive_regularization/datasets.py
 adaptive_regularization/model.py
 adaptive_regularization/train_eval.py
+nngp/nngp_test.py
+nngp/__init__.py
+nngp/CONTRIBUTING.md
+nngp/gpr.py
+nngp/grid_data/grid_relu_ng501_ns501_nc500_mv100_mg10
+nngp/grid_data/grid_tanh_ng501_ns501_nc500_mv100_mg10
+nngp/interp.py
+nngp/LICENSE
+nngp/load_dataset.py
+nngp/nngp.py
+nngp/README.md
+nngp/run_experiments.py
