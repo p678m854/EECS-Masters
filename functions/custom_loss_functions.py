@@ -72,9 +72,9 @@ def mse_and_roughness(
 ):
     """Linear weighting between MSE and average smoothness penalty"""
     mse_points = tf.keras.losses.MSE(y_actual, y_pred)  # mean squared error
-    msp = smoothness_penalty(y_pred, degree)  # mean smoothness penalty
+    mrp = roughness_penalty(y_pred, degree)  # mean smoothness penalty
     
-    return (tf.constant(1.) - alpha)*mse_points + alpha*tf.keras.backend.sum(msp)
+    return (tf.constant(1.) - alpha)*mse_points + alpha*tf.keras.backend.sum(mrp)
 
 @tf.function
 def bezier_loss(y_actual, y_pred):

@@ -7,6 +7,7 @@ Created on Sun Mar  1 20:34:19 2020
 
 #Import libraries
 import math
+import numba
 import numpy as np
 import pandas as pd
 import io
@@ -935,3 +936,207 @@ def detrend_pwm(test_df):
     test_df = pd.concat([test_df, df], sort=True)
     
     return test_df
+
+# Get a function to generate data based on windowing
+def generate_opt_control_test_data(
+    test_df,
+    past_delta_t,
+    future_delta_t,
+    downsample_dict=None
+):
+    """
+    Args:
+        test_df (pd.DataFrame): Flight test data frame to look at
+        past_delta_t (float): time in seconds to gather past data in [current_time - past_delta_t, current_time] window.
+        future_delta_t (float): time in seconds to gather past data in [current_time, current_time + future_delta_t] window.
+        dowsample_dict (dict): dictionary whose keys are the variables used in training and tests with positive integers 
+                                for relative downsample rate. The keys are stride_var with var being pos, att, pos_ref, 
+                                att_ref, motor_speeds, accel, gyro, or pwms.
+    """
+    
+    # Dictionary default
+    if downsample_dict is None:
+        downsample_dict = {
+            'stride_pos': 1,
+            'stride_att': 1,
+            'stride_pos_ref': 1,
+            'stride_att_ref': 1,
+            'stride_motor_speeds': 1,
+            'stride_accel': 1,
+            'stride_gyro': 1,
+            'stride_pwms': 1
+        }
+    
+    # Get inputs to optimal control sequence
+    # pos., att., ref pos., ref att. ,motor speeds., acc., gyro
+    pos = test_df[['px_[m]', 'py_[m]', 'pz_[m]']].dropna()
+    pos_ref = test_df[['pxr_[m]', 'pyr_[m]', 'pzr_[m]']].dropna()
+    att = test_df[['qw', 'qx', 'qy', 'qz']].dropna()
+    att_ref = test_df[['qwr', 'qxr', 'qyr', 'qzr']].dropna()
+    motor_speeds = test_df[['rpm1', 'rpm2', 'rpm3', 'rpm4']].dropna()
+    accel = test_df[['ax_[m/s2]', 'ay_[m/s2]', 'az_[m/s2]']].dropna()
+    gyro = test_df[['omegax_[dps]', 'omegay_[dps]', 'omegaz_[dps]']].dropna()
+
+    # Get control
+    pwms = test_df[test_df['is_flying']]
+    pwms = pwms[['PWM1_f', 'PWM2_f', 'PWM3_f', 'PWM4_f']].dropna()
+    
+    # Get time vectors for history
+    def get_tvec(state_df):
+        tvec = (state_df.index - test_df.index[0]) * (10**-9)
+        tvec = tvec.astype('float')
+        return tvec.values
+    
+    # Time Vector
+    t_pos = get_tvec(pos)
+    t_att = get_tvec(att)
+    t_pref = get_tvec(pos_ref)
+    t_aref = get_tvec(att_ref)
+    t_motors = get_tvec(motor_speeds)
+    t_acc = get_tvec(accel)
+    t_gyro = get_tvec(gyro)
+    t_pwms = get_tvec(pwms)
+    
+    # Dataframe to numpy
+    def df_to_numpy(state_df):
+        return state_df.values
+    
+    pos = df_to_numpy(pos)
+    att = df_to_numpy(att)
+    pos_ref = df_to_numpy(pos_ref)
+    att_ref = df_to_numpy(att_ref)
+    motor_speeds = df_to_numpy(motor_speeds)
+    accel = df_to_numpy(accel)
+    gyro = df_to_numpy(gyro)
+    pwms = df_to_numpy(pwms)
+
+    # Scaling all numpy data to [0,1] range or [-1,1] range based either on flight test bounds or hardware bounds
+    pos = pos/5.  # All flight tests are within 10m cube with Z being [-5,0]
+    pos_ref = pos_ref/5.
+    # attitude is already a unit scaling
+    """
+    From initial BB notebook, 0.125 change in frac. throttle gives ~2500 rpm change. Snail gives 2400 rpm/V so if
+    assuming linear scaling for rpm a max of 20,000 rpm and a voltage of 8.33 V. From reference it looks like 3S LiPo 
+    battery with nominal voltage of 11.1 V. Seems to be short a cell for traditional race/freestyle quads.
+    
+    Snail:
+        https://www.dji.com/snail/info#specs
+        https://dl.djicdn.com/downloads/snail/20170315/SNAIL+2305+Racing+Motor_multi.pdf
+    Other:
+        https://www.getfpv.com/learn/new-to-fpv/all-about-multirotor-fpv-drone-battery/#:~:text=The%20lithium%20battery%20packs%20used,4.35V%20at%20full%20charge.
+    """
+    motor_speeds = motor_speeds/20000.
+    # https://www.xsens.com/hubfs/Downloads/Manuals/MTi-1-series-datasheet.pdf?hsCtaTracking=6999e406-3b81-44e2-8e2d-5ecf00e23d87%7Ced790e48-f312-4c41-ad3b-50931a26a420
+    accel = accel/(2*9.81)  # Full scale is +/- 16 g's but I think 2 will be fine
+    gyro = gyro/1000.  # Full scale is +/- 20000 deg/s
+    pwms = (pwms - 1000.)/1000.
+    
+    
+    # Determine deltas for windowing
+    dt_pos = np.median(np.diff(t_pos))
+    dt_att = np.median(np.diff(t_att))
+    dt_pref = np.median(np.diff(t_pref))
+    dt_aref = np.median(np.diff(t_aref))
+    dt_motors = np.median(np.diff(t_motors))
+    dt_acc = np.median(np.diff(t_acc))
+    dt_gyro = np.median(np.diff(t_gyro))
+    dt_pwms = np.median(np.diff(t_pwms)) # The medium will take care of any gaps
+    
+    # Find number of state values
+    n_pos = int(np.floor(past_delta_t/dt_pos))
+    n_att = int(np.floor(past_delta_t/dt_att))
+    n_pref = int(np.floor(future_delta_t/dt_pref))
+    n_aref = int(np.floor(future_delta_t/dt_aref))
+    n_motors = int(np.floor(past_delta_t/dt_motors))
+    n_acc = int(np.floor(past_delta_t/dt_acc))
+    n_gyro = int(np.floor(past_delta_t/dt_gyro))
+    n_pwms = int(np.floor(future_delta_t/dt_pwms))
+    
+    # Record this in a dictionary
+    info = {
+        'vicon position': (n_pos, dt_pos),
+        'vicon attitude': (n_att, dt_att),
+        'reference position': (n_pref, dt_pref),
+        'reference attitude': (n_aref, dt_aref),
+        'motor speeds': (n_motors, dt_motors),
+        'accelerometer': (n_acc, dt_acc),
+        'gyroscope': (n_gyro, dt_gyro),
+        'PWM': (n_pwms, dt_pwms)
+    }
+    
+    # Preallocate input and output vectors
+    N = t_pwms.shape[0] - n_pwms + 1 # Edit N to mai
+    X = np.zeros((
+        N,
+        int(np.ceil(n_pos/downsample_dict['stride_pos']))*pos.shape[1] + 
+        int(np.ceil(n_att/downsample_dict['stride_att']))*att.shape[1] + 
+        int(np.ceil(n_pref/downsample_dict['stride_pos_ref']))*pos_ref.shape[1] + 
+        int(np.ceil(n_aref/downsample_dict['stride_att_ref']))*att_ref.shape[1] + 
+        int(np.ceil(n_motors/downsample_dict['stride_motor_speeds']))*motor_speeds.shape[1] +
+        int(np.ceil(n_acc/downsample_dict['stride_accel']))*accel.shape[1] + 
+        int(np.ceil(n_gyro/downsample_dict['stride_gyro']))*gyro.shape[1]
+    ))
+    Y = np.zeros((N, int(np.ceil(n_pwms/downsample_dict['stride_pwms']))*pwms.shape[1]))
+    tvec_y = np.zeros((N, int(np.ceil(n_pwms/downsample_dict['stride_pwms']))))
+    
+    @numba.jit(nopython=True)
+    def fast_generator(
+        X, Y, tvec_y,
+        pos, att, pos_ref, att_ref, motor_speeds, accel, gyro, pwms,
+        n_pos, n_att, n_pref, n_aref, n_motors, n_acc, n_gyro, n_pwms,
+        stride_pos, stride_att, stride_pos_ref, stride_att_ref, stride_motor_speeds, stride_accel, stride_gyro, stride_pwms
+    ):
+        pwm_length = int(Y.shape[1]/4)
+        for i in numba.prange(N):
+            # allocate output values
+            for j in range(pwms.shape[1]):
+                Y[i,j*pwm_length:(j+1)*pwm_length] = pwms[i:i+n_pwms:stride_pwms, j]
+
+            # Sampling time
+            t_sample = t_pwms[i]
+
+            def numba_2d_fortran_flatten(X):
+                Xflattened = np.zeros((X.shape[0]*X.shape[1],))
+                ni = X.shape[0]
+                for j in range(X.shape[1]):
+                    Xflattened[j*ni:(j+1)*ni] = X[:,j]
+                return Xflattened
+            
+            # Accumulate input states
+            # Position
+            pos_line = numba_2d_fortran_flatten(pos[t_pos <= t_sample, :][-n_pos::stride_pos, :])
+            att_line = numba_2d_fortran_flatten(att[t_att <= t_sample, :][-n_att::stride_att, :])
+            pref_line = numba_2d_fortran_flatten(pos_ref[t_sample <= t_pref, :][:n_pref:stride_pos_ref, :])
+            aref_line = numba_2d_fortran_flatten(att_ref[t_sample <= t_aref, :][:n_aref:stride_att_ref, :])
+            motors_line = numba_2d_fortran_flatten(motor_speeds[t_motors <= t_sample, :][-n_motors::stride_motor_speeds, :])
+            acc_line = numba_2d_fortran_flatten(accel[t_acc <= t_sample, :][-n_acc::stride_accel, :])
+            gyro_line = numba_2d_fortran_flatten(gyro[t_gyro <= t_sample, :][-n_gyro::stride_gyro, :])
+
+            # Put input states into input row already flattened
+            if X.shape[1] == (pos_line.shape[0] + pref_line.shape[0] +
+                              att_line.shape[0] + aref_line.shape[0] +
+                              motors_line.shape[0] + 
+                              acc_line.shape[0] + gyro_line.shape[0]):
+                X[i, :] = np.concatenate((
+                    pos_line, pref_line, att_line, aref_line, motors_line, acc_line, gyro_line
+                ))
+            else:
+                X[i, :] = np.nan
+
+            # Update expected time
+            tvec_y[i, :] = t_sample + dt_pwms*(np.arange(0, n_pwms)[::stride_pwms])
+    
+    fast_generator(
+        X, Y, tvec_y, 
+        pos, att, pos_ref, att_ref, motor_speeds, accel, gyro, pwms,
+        n_pos, n_att, n_pref, n_aref, n_motors, n_acc, n_gyro, n_pwms,
+        **downsample_dict
+    )
+    
+    # Get rid of invalid segments
+    ind_valid = np.all(np.isfinite(X), axis=1)
+    X = X[ind_valid]
+    Y = Y[ind_valid]
+    tvec_y = tvec_y[ind_valid]
+    
+    return (X, Y, tvec_y, info)
