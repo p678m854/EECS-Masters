@@ -105,3 +105,9 @@ nngp/load_dataset.py
 nngp/nngp.py
 nngp/README.md
 nngp/run_experiments.py
+models/grid_relu_ng101_ns101_nc100_mv100_mg10
+models/grid_relu_ng101_ns501_nc500_mv100_mg10
+models/grid_relu_ng11_ns11_nc10_mv10_mg10
+models/grid_relu_ng5_ns5_nc4_mv4_mg4
+nngp_tf2/nngp.py
+*.npz
