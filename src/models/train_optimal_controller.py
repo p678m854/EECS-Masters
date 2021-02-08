@@ -12,20 +12,9 @@ import os
 import sys
 import tensorflow as tf
 
-
-# Add to custom codes to path
-#  Current file location: EECS-Masters/src/models/
-for folder in ['functions', 'models']:
-    sys.path.append(os.path.abspath('../../%s' % folder))
-
 # Additional imports
-import read_blackbird_dataset as rbd
-import custom_loss_functions as clf
-
-
-TEST_FLIGHTS_LIST = [
-    ()
-]
+from ..data import blackbird_dataset as rbd
+from ..modules import loss_functions as clf
 
 
 def tensorflow_demo_test():
