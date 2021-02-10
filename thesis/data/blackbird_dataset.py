@@ -2,22 +2,33 @@
 """
 Created on Sun Mar  1 20:34:19 2020
 
-@author: Patrick
+@author: Patrick McNamee
 """
 
 #Import libraries
+import io
 import math
 import numba
 import numpy as np
 import pandas as pd
-import io
 import requests
+import sys
+
 
 # Custom modules
-from ..modules import dsp
-from ..modules import quaternions
+if __name__ == "__main__":
+    from thesis.modules import dsp
+    from thesis.modules import quaternions
+    from thesis.modules.quaternions import quaternion_to_euler
+else:
+    from ..modules import dsp
+    from ..modules import quaternions
+    from ..modules.quaternions import quaternion_to_euler
 
-TEST_FLIGHTS_LIST = [
+
+# Global Script Varibles
+DEFAULT_TEST_FLIGHT = ('figure8', 'Constant', 0.5)
+TEST_FLIGHT_LIST = [
     # (maneuver, yaw, speed)
     ('ampersand', 'Forward', 1.),
     ('ampersand', 'Forward', 2.),
@@ -180,6 +191,7 @@ TEST_FLIGHTS_LIST = [
 ]
 
 
+# Classes
 class BlackbirdVehicle():
     """ 
     Blackbird: https://arxiv.org/pdf/1810.01987.pdf
@@ -214,68 +226,6 @@ class BlackbirdVehicle():
         return np.array([[self.Ixx,        0,        0],
                          [       0, self.Iyy,        0],
                          [       0,        0, self.Izz]])
-
-    
-def quaternion_to_euler(qw, qx, qy, qz):
-    """From a quaternion to aircraft euler angles.
-    
-    Keyword arguments:
-    qw -- rotational component
-    qx -- x-axis component
-    qy -- y-axis component
-    qz -- z-axis component
-    """
-    q = np.array([qw, qx, qy, qz], dtype=np.float64, copy=True)
-    ssq = np.dot(q,q) #Sum of squares norm
-    Rmatrix = None    #Rotation matrix
-    
-    #Machine Precission work
-    if ssq < 10 ** -6:
-        Rmatrix = np.identity(3)
-    else:
-        q *= math.sqrt(2/ssq) #The 2 is included for ease of formulas
-        q = np.outer(q,q)     #Symmetric matrix, really only need upper diagonal
-        
-        """
-        From:
-            Representing Attitude: Euler Angles, Unit Quaternions, and Rotation Vectors
-                by James Diebel, Stanford University (2006)
-        Eq 125:
-        | q0^2 + q1^2 - q2^2 - q3^2 | 2(q1*q2 + q3*q4)          | 2(q1*q3 - q0*q2)          |
-        | 2(q1*q2 - q3*q4)          | q0^2 - q1^2 + q2^2 - q3^2 | 2(q2*q3 + q0*q1)          |
-        | 2(q1*q3 + q0*q2)          | 2(q2*q3 - q0*q1)          | q0^2 - q1^2 - q2^2 + q3^2 |
-        """
-        
-        Rmatrix = np.array((
-            (1.0 - q[2,2] - q[3,3],       q[1,2] + q[0,3],       q[1,3] - q[0,2]),
-            (      q[1,2] - q[0,3], 1.0 - q[1,1] - q[3,3],       q[2,3] + q[0,1]),
-            (      q[1,3] + q[0,2],       q[2,3] - q[0,1], 1.0 - q[1,1] - q[2,2])
-        ), dtype=np.float64)
-
-    #Determine the Euler angles (takes simpliest solution)
-    theta = np.arcsin(-Rmatrix[0,2])           #Assuming theta in [-pi/2, pi/2]
-    phi = np.arctan(Rmatrix[1,2]/Rmatrix[2,2]) #Assuming phi in [-pi/2, pi/2]
-
-    Rphi = np.array((
-        (1,             0,             0),
-        (0,  math.cos(phi), math.sin(phi)),
-        (0, -math.sin(phi), math.cos(phi))
-    ), dtype=np.float64)
-    Rtheta = np.array((
-        (math.cos(theta), 0, -math.sin(theta)),
-        (              0, 1,                0),
-        (math.sin(theta), 0,  math.cos(theta))
-    ), dtype=np.float64)
-    
-    #Determine rotation matrix by psi
-    Rpsi = np.matmul(np.transpose(np.matmul(Rphi,
-                                            Rtheta)),
-                    Rmatrix)
-    
-    psi = np.arctan2(Rpsi[0,1], Rpsi[0,0])
-    
-    #return (phi, theta, psi)
-    return np.array((phi, theta, psi), dtype=np.float64)
 
 
 def rosbag_index_to_time_vector(index):
@@ -1345,3 +1295,34 @@ def generate_opt_control_test_data(
     tvec_y = tvec_y[ind_valid]
     
     return (X, Y, tvec_y, info)
+
+
+if __name__=="__main__":
+    # Script part for stress testing downloading dataset
+    argc = len(sys.argv)
+    print(sys.argv)
+    if argc > 2:
+        raise IOError(
+            "Script is for stress testing only. Expected argc=1 or 2, recieved argc = %i." % argc
+        )
+    
+    # Get user selected flight test
+    n = int(sys.argv[1]) if argc == 2 else TEST_FLIGHT_LIST.index(DEFAULT_TEST_FLIGHT)
+
+    # Bounds on accessing flight tests
+    MIN_N = 0  # Minimum accessible index
+    MAX_N = len(TEST_FLIGHT_LIST)  # Exclusive maximum index
+    
+    # Check bounds
+    if n < MIN_N or n >= MAX_N:
+        raise ValueError(
+            "Selected flight test must be in interval [%i, %i), recieved %i." % (
+                MIN_N, MAX_N, n
+                ))
+
+    # Load in dataset
+    print("Flight test: (%s, %s, %f)" % TEST_FLIGHT_LIST[n])
+    print("start loading flight test")
+    cleaned_blackbird_test(*TEST_FLIGHT_LIST[n])
+    print("finished loading flight test")
+    
