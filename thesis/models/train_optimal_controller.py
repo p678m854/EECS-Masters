@@ -13,8 +13,17 @@ import sys
 import tensorflow as tf
 
 # Additional imports
-from ..data import blackbird_dataset as rbd
-from ..modules import loss_functions as clf
+if __name__=="__main__":
+    from thesis.data import blackbird_dataset as rbd
+    from thesis.modules import loss_functions as clf
+else:
+    from ..data import blackbird_dataset as rbd
+    from ..modules import loss_functions as clf
+
+
+# File defaults
+DEFAULT_TEST = ('figure8', 'Constant', 0.5)
+DEFAULT_DOWNSAMPLING_DICT = dict()  # TODO: update values here
 
 
 def tensorflow_demo_test():
@@ -35,12 +44,12 @@ def tensorflow_demo_test():
 
     # Output the first prediction
     predictions = model(x_train[:1]).numpy()
-    predictions
+    print(predictions)
 
     # Loss function stuff
-    tf.nn.softmax(predictions).numpy()
+    print(tf.nn.softmax(predictions).numpy())
     loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    loss_fn(y_train[:1], predictions).numpy()
+    print(loss_fn(y_train[:1], predictions).numpy())
 
     # Compile model
     model.compile(
@@ -62,10 +71,11 @@ def tensorflow_demo_test():
     ])
 
     # Output the probability
-    probability_model(x_test[:5])
+    print(probability_model(x_test[:5]))
     
     
 # Running as script
 if __name__ == "__main__":
+    print('Running script:')
+
     
-    print('Successfully ran as script')
