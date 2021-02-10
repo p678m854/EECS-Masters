@@ -1112,19 +1112,19 @@ def detrend_pwm(test_df):
 
 def cleaned_blackbird_test(maneuver, yaw_direction, max_speed):
     """Returns fully populated test dataframe."""
-    test_df = rbd.read_blackbird_test(maneuver, yaw_direction, max_speed)
-    rbd.imu_installation_correction(test_df)
-    test_df = rbd.inertial_position_derivatives_estimation(test_df)
-    test_df = rbd.gyroscope_derivatives_estimation(test_df)
-    test_df = rbd.consistent_quaternions(test_df)
-    test_df = rbd.inertial_quaternion_derivatives_estimation(test_df)
-    test_df = rbd.body_quaternion_angular_derivative_estimate(test_df)
-    test_df = rbd.motor_scaling(test_df)
-    test_df = rbd.motor_rates(test_df)
-    test_df = rbd.quaternion_body_acceleration(test_df)
-    test_df = rbd.detrend_pwm(test_df)
-    test_df = rbd.scale_and_filter_pwms(test_df)
-    test_df = rbd.on_ground(test_df)  # Must be last function
+    test_df = read_blackbird_test(maneuver, yaw_direction, max_speed)
+    imu_installation_correction(test_df)
+    test_df = inertial_position_derivatives_estimation(test_df)
+    test_df = gyroscope_derivatives_estimation(test_df)
+    test_df = consistent_quaternions(test_df)
+    test_df = inertial_quaternion_derivatives_estimation(test_df)
+    test_df = body_quaternion_angular_derivative_estimate(test_df)
+    test_df = motor_scaling(test_df)
+    test_df = motor_rates(test_df)
+    test_df = quaternion_body_acceleration(test_df)
+    test_df = detrend_pwm(test_df)
+    test_df = scale_and_filter_pwms(test_df)
+    test_df = on_ground(test_df)  # Must be last function
     return test_df
 
 
@@ -1136,6 +1136,20 @@ def generate_opt_control_test_data(
     downsample_dict=None
 ):
     """
+    
+    Description:
+        Example below will give ~10 Hz for all states of interests over 1 second
+        ds_dict = {
+            'stride_pos': 36,
+            'stride_att': 36,
+            'stride_pos_ref': 19,
+            'stride_att_ref': 19,
+            'stride_motor_speeds': 19,
+            'stride_accel': 10,
+            'stride_gyro': 10,
+            'stride_pwms': 19
+        }
+    
     Args:
         test_df (pd.DataFrame): Flight test data frame to look at
         past_delta_t (float): time in seconds to gather past data in [current_time - past_delta_t, current_time] window.
