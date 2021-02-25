@@ -92,6 +92,7 @@ target/
 .mypy_cache/
 models/optcon_model_weights.keras
 *.keras
+*.h5
 
 # Benchmarked external libraries
 adaptive_regularization/*

@@ -1081,8 +1081,8 @@ def cleaned_blackbird_test(maneuver, yaw_direction, max_speed):
 # Get a function to generate data based on windowing
 def generate_opt_control_test_data(
     test_df,
-    past_delta_t,
-    future_delta_t,
+    past_delta_t=1.,  # 1 second past window
+    future_delta_t=1.,  # 1 second future window
     downsample_dict=None
 ):
     """
