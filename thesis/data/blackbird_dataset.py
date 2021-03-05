@@ -1209,14 +1209,67 @@ def generate_opt_control_test_data(
     
     # Record this in a dictionary
     info = {
-        'vicon position': (n_pos, dt_pos),
-        'vicon attitude': (n_att, dt_att),
-        'reference position': (n_pref, dt_pref),
-        'reference attitude': (n_aref, dt_aref),
-        'motor speeds': (n_motors, dt_motors),
-        'accelerometer': (n_acc, dt_acc),
-        'gyroscope': (n_gyro, dt_gyro),
-        'PWM': (n_pwms, dt_pwms)
+        # Variables: (datapoints, dt between points, dimension)
+        'vicon position': (
+            int(np.ceil(n_pos/downsample_dict['stride_pos'])),
+            dt_pos*downsample_dict['stride_pos'],
+            pos.shape[1]
+        ),
+        'vicon attitude': (
+            int(np.ceil(n_att/downsample_dict['stride_att'])),
+            dt_att*downsample_dict['stride_att'],
+            att.shape[1]
+        ),
+        'reference position': (
+            int(np.ceil(n_pref/downsample_dict['stride_pos_ref'])),
+            dt_pref*downsample_dict['stride_pos_ref'],
+            pos_ref.shape[1]
+        ),
+        'reference attitude': (
+            int(np.ceil(n_aref/downsample_dict['stride_att_ref'])),
+            dt_aref*downsample_dict['stride_att_ref'],
+            att_ref.shape[1]
+        ),
+        'motor speeds': (
+            int(np.ceil(n_motors/downsample_dict['stride_motor_speeds'])),
+            dt_motors*downsample_dict['stride_motor_speeds'],
+            motor_speeds.shape[1]
+        ),
+        'accelerometer': (
+            int(np.ceil(n_acc/downsample_dict['stride_accel'])),
+            dt_acc*downsample_dict['stride_accel'],
+            accel.shape[1]
+        ),
+        'gyroscope': (
+            int(np.ceil(n_gyro/downsample_dict['stride_gyro'])),
+            dt_gyro*downsample_dict['stride_gyro'],
+            gyro.shape[1]
+        ),
+        'PWM': (
+            int(np.ceil(n_pwms/downsample_dict['stride_pwms'])), 
+            dt_pwms*downsample_dict['stride_pwms'],
+            pwms.shape[1]
+        ),
+        # Order that variables appear in input and output vectors. Variables keys above
+        'input variables': [
+            'vicon position',
+            'vicon attitude',
+            'reference position',
+            'reference attitude',
+            'motor speeds',
+            'accelerometer',
+            'gyroscope',
+        ],
+        'output variables': ['PWM'],
+        # Whether variables are known, i.e. past window, or desired i.e. future window.
+        'future variables': ['reference position', 'reference attitude', 'PWM'],
+        'past variables': [
+            'vicon position',
+            'vicon attitude',
+            'motor speeds',
+            'accelerometer',
+            'gyroscope',
+        ]
     }
     
     # Preallocate input and output vectors
@@ -1295,6 +1348,137 @@ def generate_opt_control_test_data(
     tvec_y = tvec_y[ind_valid]
     
     return (X, Y, tvec_y, info)
+
+
+def trim_opt_control_test_data(
+    X, Y, original_info,
+    n_pos, n_att, n_pref, n_aref, n_motors, n_acc, n_gyro, n_pwm
+):
+    """Trim test data to reshape into desired dimensions
+
+    original number of points in original_info dictionary
+
+    info = {
+        'variable': (n_points, dt_points, dim),
+        'input variables': list(),
+        'output variables': list(),
+        'future variables': list(),
+        'past variables': list()
+    }
+
+    past windows: pos, att, motors, acc, gyro
+    forward windows: pref, aref, pwms
+    """
+
+    # Create new information dictionary with updated number of points
+    new_info = {
+        'vicon position': int(n_pos),
+        'vicon attitude': int(n_att),
+        'reference position': int(n_pref),
+        'reference attitude': int(n_aref),
+        'motor speeds': int(n_motors),
+        'accelerometer': int(n_acc),
+        'gyroscope': int(n_gyro),
+        'PWM': int(n_pwm),
+    }
+    for key in original_info.keys():
+        if type(original_info[key]) is tuple:
+            # new information dictionary now (n_data, dt, dim) for variable
+            new_info[key] = (new_info[key],) + original_info[key][1:]
+        else:
+            new_info.update({key: original_info[key]})
+
+    for key in new_info.keys():
+        assert type(new_info[key]) in [tuple, list]
+
+    # Preallocate new input and output matrices
+    Xnew_d = 0
+    Ynew_d = 0
+    for var in new_info['input variables']:
+        Xnew_d += new_info[var][0]*new_info[var][2]
+    for var in new_info['output variables']:
+        Ynew_d += new_info[var][0]*new_info[var][2]
+    Xnew = np.zeros((X.shape[0], Xnew_d))
+    Ynew = np.zeros((Y.shape[0], Ynew_d))
+
+    # X and Y have been flattened fortran style
+    #     i.e. [c1, c2, ..., cm] rather than [r1, r2, ..., rn] for a (n,m) matrix
+
+    # index offsets
+    o_offset = 0  # original data
+    n_offset = 0  # new data
+
+    for var in new_info['input variables']:
+        ndp = new_info[var][0]  # New number of points
+        odp = original_info[var][0]  # Old number of points
+        dim = original_info[var][2]  # Variable dimensions
+        # Copy in the points from old input vector
+        if var in new_info['past variables']:
+            for i in range(dim):
+                Xnew[
+                    :, 
+                    (n_offset + i*ndp):(n_offset + (i+1)*ndp)
+                ] = X[
+                    :, 
+                    (o_offset + (i+1)*odp - ndp):o_offset + (i+1)*odp
+                ]
+        elif var in new_info['future variables']:
+            for i in range(dim):
+                Xnew[
+                    :, 
+                    (n_offset + i*ndp):(n_offset + (i+1)*ndp)
+                ] = X[
+                    :, 
+                    (o_offset + i*odp):o_offset + i*odp + ndp
+                ]
+        else:
+            raise ValueError(
+                "Variable %s not specified as a future or past variable." % str(var)
+            )
+
+        # Update offsets
+        o_offset += odp*dim
+        n_offset += ndp*dim
+
+    # Do the same for outputs
+    o_offset = 0  # original data
+    n_offset = 0  # new data
+
+    for var in new_info['output variables']:
+        ndp = new_info[var][0]  # New number of points
+        odp = original_info[var][0]  # Old number of points
+        dim = original_info[var][2]  # Variable dimensions
+        # Copy in the points from old input vector
+        if var in new_info['past variables']:
+            for i in range(dim):
+                Ynew[
+                    :, 
+                    (n_offset + i*ndp):(n_offset + (i+1)*ndp)
+                ] = Y[
+                    :, 
+                    (o_offset + (i+1)*odp - ndp):o_offset + (i+1)*odp
+                ]
+        elif var in new_info['future variables']:
+            for i in range(dim):
+                Ynew[
+                    :, 
+                    (n_offset + i*ndp):(n_offset + (i+1)*ndp)
+                ] = Y[
+                    :, 
+                    (o_offset + i*odp):o_offset + i*odp + ndp
+                ]
+        else:
+            raise ValueError(
+                "Variable %s not specified as a future or past variable." % str(var)
+            )
+
+        # Update offsets
+        o_offset += odp*dim
+        n_offset += ndp*dim
+
+    # Return new input, output matrices as well as descriptive dictionary.
+    return Xnew, Ynew, new_info
+
 
 
 if __name__=="__main__":
