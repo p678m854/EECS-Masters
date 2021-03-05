@@ -100,4 +100,4 @@ nngp/*
 models/grid_*
 nngp_tf2/nngp.py
 *.npz
-*.npy  # Numpy array files
+*.npy
