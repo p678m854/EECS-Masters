@@ -408,6 +408,10 @@ def read_blackbird_test(maneuver, yawdirection, speed):
                          imu_df, 
                          pwm_df, 
                          motors_df], sort=True)
+    
+    # Free up some memory
+    del pos_and_orien, pose_ref_df, imu_df, pwm_df, motors_df
+    
     return test_df
 
 
@@ -465,12 +469,21 @@ def inertial_position_derivatives_estimation(test, flag_parallel=True):
         #data = {cols[0] : p_est[:,0], cols[1] : p_est[:,1], cols[2] : p_est[:,2]}
         columns_list = columns_list + cols
         
+        # Freeing up some memory
+        del p, p_est
+    
+    # Free up subset dataframe memory
+    del subset
+    
     df = pd.DataFrame(data, columns=columns_list)
     df.index = ind
 
     # Merge 
     test = pd.concat([test, df], sort=True)
 
+    # Free up memory
+    del df, data
+    
     return test
 
 
@@ -509,10 +522,19 @@ def gyroscope_derivatives_estimation(test, flag_parallel=True):
             data[cols[i]] = omega_est[:, i]
         columns_list = columns_list + cols
         
+        # Free up memory
+        del omega
+        
+    # Free up memory
+    del subset
+        
     df = pd.DataFrame(data, columns=columns_list)
     df.index = ind
     test = pd.concat([test, df], sort=True)
-        
+    
+    # Free up memory
+    del df, data
+    
     return test
 
 
@@ -551,6 +573,9 @@ def consistent_quaternions(test):
         df = pd.DataFrame(q, columns=cols, index = ind)
         test = test.drop(cols, axis=1)
         test = pd.concat([test, df], sort=True)
+        
+        # Free up memory
+        del subset, q, df
 
     return test
 
@@ -592,9 +617,16 @@ def inertial_quaternion_derivatives_estimation(test, flag_parallel=True):
             df = subdf
         else:
             df = pd.concat([df, subdf], axis=1)
+            
+        # Free up memory
+        del q, subdf
+       
     df.index = ind
     test = pd.concat([test, df], sort=True)
-        
+    
+    # Free up memory
+    del subset, df
+    
     return test
 
 
@@ -634,7 +666,9 @@ def body_quaternion_angular_derivative_estimate(test, flag_W=None):
     for i in range(len(t_q)):
         omega_q[i]  = quaternions.Omega_from_quaternions(q[i], qdot[i])
         omega_qa[i] = quaternions.Omega_from_quaternions_alt(q[i], qdot[i])
-        
+    
+    del qdot
+    
     #Iterate through IMU series determining errors
     N = float(len(t_imu))
     M = len(t_q)
@@ -665,6 +699,8 @@ def body_quaternion_angular_derivative_estimate(test, flag_W=None):
                    ((o2[1] - omega_imu[i,1]) ** 2) + 
                    ((o2[2] - omega_imu[i,2]) ** 2))/N
     
+    del omega_imu, o1, o2
+    
     # Determine best solution
     sol = None
     if (e1 <= e2 and flag_W is None) or flag_W:
@@ -680,7 +716,9 @@ def body_quaternion_angular_derivative_estimate(test, flag_W=None):
             omegadot_q[i] = quaternions.Omega_from_quaternions(q[i], qdotdot[i])
         else:
             omegadot_q[i] = quaternions.Omega_from_quaternions_alt(q[i], qdotdot[i])
-            
+    
+    del q, qdotdot
+    
     # Merge the angularderivatives into the dataset
     df = pd.DataFrame(data=np.concatenate((omega_q, omegadot_q), axis=1),
                       columns=['omegax_qest',
@@ -690,20 +728,14 @@ def body_quaternion_angular_derivative_estimate(test, flag_W=None):
                                'omegadoty_qest',
                                'omegadotz_qest'],
                       index=ind)
+    
+    del omega_q, omegadot_q
+    
     test = pd.concat([test, df], sort=True)
-    """
-    df_omega = pd.DataFrame(data=omega_q,
-                            columns=['omegax_qest',
-                                     'omegay_qest',
-                                     'omegaz_qest'],
-                            index=ind)
-    df_omegadot = pd.DataFrame(data=omegadot_q,
-                               columns=['omegadotx_qest',
-                                        'omegadoty_qest',
-                                        'omegadotz_qest'],
-                               index=ind)
-    test = pd.concat([test, df_omega, df_omegadot], sort=True)
-    """
+
+    # Free up memory
+    del df
+    
     return test
 
 
@@ -1165,6 +1197,10 @@ def generate_opt_control_test_data(
     gyro = df_to_numpy(gyro)
     pwms = df_to_numpy(pwms)
 
+    # Free up extraineous memory
+    del pos, att, pos_ref, att_ref, motor_speeds, accel, gyro, pwms
+    
+    
     # Scaling all numpy data to [0,1] range or [-1,1] range based either on flight test bounds or hardware bounds
     pos = pos/5.  # All flight tests are within 10m cube with Z being [-5,0]
     pos_ref = pos_ref/5.
