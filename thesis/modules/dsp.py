@@ -7,14 +7,17 @@ Summary:
 File of personally written functions for Digital Signal Pocessing used to estimate values or derivatives. Made because I was sick of libraries using uniform interval theory so I made functions to handle nonuniform intervals.
 """
 
+
 import numba
 import numpy as np
 import math
 import copy
 
+
 """
 Numerical Differentiation
 """
+
 
 def get_weights(n, h):
     #Preallocations
@@ -91,6 +94,7 @@ def nth_numerical_derivative(f, x, n=1, order=1, method='central'):
 Savitzky-Golaz Filter
 """
 
+
 def lsee_polynomial_extrapolate(tvec, x, tpred, m):
     """
     Uses the known points to fit a least squares polynomial and then extrapolates it to a predition interval
@@ -122,6 +126,7 @@ def lsee_polynomial_extrapolate(tvec, x, tpred, m):
             diff_multiplier = diff_multiplier[:-1]
     
     return dmdxm
+
 
 # Creating function for arbitary polynomial fitting
 def central_sg_filter(tvec, xvec, m=5, window=13):
@@ -252,6 +257,8 @@ def central_sg_filter_parallel(tvec, xvec, m=5, window=13):
 """
 Fourier Analysis
 """
+
+
 def FFT(tvec, X, Fs):
     """
     Description:
@@ -298,9 +305,11 @@ def FFT(tvec, X, Fs):
 
     return (fvec, Xf)
 
+
 """
 Traditional filters
 """
+
 
 def adaptive_low_pass(t, x, fc):
     """Adaptive timestep low pass filter
@@ -331,6 +340,7 @@ def adaptive_low_pass(t, x, fc):
             y[i] = (1 - alpha[i])*y[i-1] + alpha[i]*x[i]
     return y
 
+
 def moving_average(tvec, X, window):
     """Centered moving average with a specified window size.
     
@@ -355,3 +365,42 @@ def moving_average(tvec, X, window):
         X_f[i] = np.mean(kernel_values, axis=0)
     
     return X_f
+
+
+def IQR_anomoly_test(X, k=1.5):
+    """Inter-quartile range filter over N data points in M dimensions.
+    
+    Args:
+        X (np.ndarray): NxM array of real values
+    Returns:
+        index that is true if Q1[m] - k*IQR[m] <= X[i, m] <= Q3[m] + k*IQR[m] for all m in M
+    """
+    
+    # Get Q2
+    Q2 = np.median(X, axis=0)
+    
+    # Preallocate Q1 and Q3
+    Q1 = np.zeros(Q2.shape)
+    Q3 = np.zeros(Q2.shape)
+    
+    
+    # Loop over dimensions
+    for j in range(X.shape[1]):
+        Q1[j] = np.median(X[X[:,j] < Q2[j],j])
+        Q3[j] = np.median(X[X[:,j] > Q2[j],j])
+        
+    # Calculate IQR
+    IQR = Q3 - Q1
+    
+    # Lower and upper bounds
+    lb = Q1 - k*IQR
+    ub = Q3 + k*IQR
+    
+    return np.all(
+        np.logical_and(
+            X > lb,
+            X < ub
+        ),
+        axis=1  # All points along dimensions are within their respective bounds
+    )
+    

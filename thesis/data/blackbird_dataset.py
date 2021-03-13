@@ -1186,6 +1186,7 @@ def generate_opt_control_test_data(
     
     # Dataframe to numpy
     def df_to_numpy(state_df):
+        # Should I ensure a deletion of dataframe here?
         return state_df.values
     
     pos = df_to_numpy(pos)
@@ -1196,10 +1197,14 @@ def generate_opt_control_test_data(
     accel = df_to_numpy(accel)
     gyro = df_to_numpy(gyro)
     pwms = df_to_numpy(pwms)
-
-    # Free up extraineous memory
-    del pos, att, pos_ref, att_ref, motor_speeds, accel, gyro, pwms
     
+    # IQR filtering based on PWM signals to classify start and stop of nominal flight
+    val_pwms = dsp.IQR_anomoly_test(pwms)  # True are valid PWMs
+    start_index, stop_index = np.arange(t_pwms.shape[0])[val_pwms][[0, -1]]  # Get index of first and last valid points
+    t_pwms = t_pwms[start_index:(stop_index + 1)]  # Trim pwm time
+    pwms = pwms[start_index:(stop_index + 1), :]  # Trim pwms
+    
+    del val_pwms
     
     # Scaling all numpy data to [0,1] range or [-1,1] range based either on flight test bounds or hardware bounds
     pos = pos/5.  # All flight tests are within 10m cube with Z being [-5,0]
