@@ -156,7 +156,7 @@ def creating_training_data_stress_test():
     print("Output dimensions: %i" % Y.shape[1])
 
 
-def create_sequential_model(input_dim: int, output_dim: int, depth: int, layer_width=None):
+def create_sequential_model(input_dim: int, output_dim: int, depth: int, layer_width=None, act_fun=None):
     """Create a simple sequential neural network.
 
     Description:
@@ -167,6 +167,7 @@ def create_sequential_model(input_dim: int, output_dim: int, depth: int, layer_w
         output_dim (int): Output dimension i.e. Y.shape[1] where Y is a numpy array and len(Y.shape) == 2
         depth (int): Number of layers in the neural network.
         layer_width (tuple or int): Specifying individual layer widths. If None, all layers are taken to be the output dimension. If an integer, then all layers have that width. If a tuple, then each element is a layer width with the assertion that len(layer_width) == depth.
+        act_fun (callable or tuple(callables)): Activation function to use on layers. Sample logic as layer_width but this time with an activation function. Default is the tensorflow relu function.
 
     Returns:
         simple_model (tf.keras.Model): Simple sequenctial neural network model.
@@ -194,6 +195,20 @@ def create_sequential_model(input_dim: int, output_dim: int, depth: int, layer_w
             "layer_width needs to be None, tuple, or int rather than %s" % type(layer_width)
         )
 
+    # Do the activation function logic
+    if act_fun is None:
+        act_fun = (tf.nn.relu,) * depth  # default 
+    elif type(act_fun) == tuple:
+        assert len(act_fun) == depth
+        for af in layer_width:
+            try:
+                tf.keras.activations.serialize(af)
+            except ValueError as ve:
+                raise ValueError("One of the activation functions is invalid in tuple")
+    else:
+        tf.keras.activations.serialize(act_fun)
+        act_fun = (act_fun,) * depth  # Match number of layers
+
     # Create model
     simple_model = tf.keras.Sequential()
     
@@ -202,12 +217,12 @@ def create_sequential_model(input_dim: int, output_dim: int, depth: int, layer_w
         if i > 0:
             simple_model.add(tf.keras.layers.Dense(
                 units=layer_width[i],
-                activation=tf.nn.relu
+                activation=act_fun[i]
             ))
         else:
             simple_model.add(tf.keras.layers.Dense(
                 units=layer_width[i],
-                activation=tf.nn.relu,
+                activation=act_fun[i],
                 input_shape=(input_dim,),
             ))
 
