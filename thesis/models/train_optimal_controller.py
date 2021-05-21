@@ -200,7 +200,7 @@ def create_sequential_model(input_dim: int, output_dim: int, depth: int, layer_w
         act_fun = (tf.nn.relu,) * depth  # default 
     elif type(act_fun) == tuple:
         assert len(act_fun) == depth
-        for af in layer_width:
+        for af in act_fun:
             try:
                 tf.keras.activations.serialize(af)
             except ValueError as ve:
@@ -227,6 +227,195 @@ def create_sequential_model(input_dim: int, output_dim: int, depth: int, layer_w
             ))
 
     return simple_model
+
+
+def create_sequential_dropout_model(input_dim: int, output_dim: int, depth: int, layer_width=None, act_fun=None, dropout_rate=None):
+    """Create a simple sequential neural network with dropouts after all hidden layers.
+
+    Description:
+        Creates a simple tensorflow sequential neural network with specifiable widths. All activation functions are simply ReLU if not secified.
+
+    Args:
+        input_dim (int): Input dimension i.e X.shape[1] where X is a numpy array and len(X.shape) == 2.
+        output_dim (int): Output dimension i.e. Y.shape[1] where Y is a numpy array and len(Y.shape) == 2
+        depth (int): Number of layers in the neural network.
+        layer_width (tuple or int): Specifying individual layer widths. If None, all layers are taken to be the output dimension. If an integer, then all layers have that width. If a tuple, then each element is a layer width with the assertion that len(layer_width) == depth.
+        act_fun (callable or tuple(callables)): Activation function to use on layers. Sample logic as layer_width but this time with an activation function. Default is the tensorflow relu function.
+        dropout_rate (tuple or float): rate of dropouts after each hidden layers. The length of the tuple should be 2 less than the depth or 0, which ever is the maximum.
+
+    Returns:
+        simple_dropout_model (tf.keras.Model): Simple sequenctial neural network model with dropouts.
+    """
+
+    # Immediate assertions
+    assert input_dim >= 0
+    assert output_dim >= 0
+    assert depth > 0
+
+    # Do the layer width logic
+    if layer_width is None:
+        layer_width = (output_dim,) * depth  # Simply match output width
+    elif type(layer_width) == int:
+        assert layer_width > 0
+        layer_width = (layer_width,) * (depth - 1) + (output_dim,)
+    elif type(layer_width) == tuple:
+        assert len(layer_width) == depth
+        for lw in layer_width:
+            assert type(lw) == int
+            assert lw > 0
+        assert layer_width[-1] == ouput_dim
+    else:
+        raise IOError(
+            "layer_width needs to be None, tuple, or int rather than %s" % type(layer_width)
+        )
+
+    # Do the activation function logic
+    if act_fun is None:
+        act_fun = (tf.nn.relu,) * depth  # default 
+    elif type(act_fun) == tuple:
+        assert len(act_fun) == depth
+        for af in act_fun:
+            try:
+                tf.keras.activations.serialize(af)
+            except ValueError as ve:
+                raise ValueError("One of the activation functions is invalid in tuple")
+    else:
+        tf.keras.activations.serialize(act_fun)
+        act_fun = (act_fun,) * depth  # Match number of layers
+
+    # Do the dropout logic
+    if dropout_rate is None:
+        dropout_rate = (0.,) * (depth - 2)  # default 
+    elif type(dropout_rate) == tuple:
+        assert len(dropout_rate) == min((depth - 2), 0)
+        for dr in dropout_rate:
+            assert type(dr) is int or type(dr) is float, "Droprate is not integer or float data type"
+            if dr < 0. or dr > 1:
+                raise ValueError("One of the dropout rates is invalid in tuple")
+    else:
+        assert type(dropout_rate) is int or type(dropout_rate) is float, "Dropout rate is not integer or float data type"
+        assert dropout_rate >= 0 and dropout_rate <= 1, "Dropout rate needs to be in [0, 1]"
+        dropout_rate = (dropout_rate,) * (depth - 2)  # Match number of layers
+
+    # Pad dropout_rate to match depth
+    dropout_rate = (None,) + dropout_rate + (None,)
+
+    # Create model
+    simple_model = tf.keras.Sequential()
+    
+    for i in range(depth):
+        # For all every other layer add in specified width
+        if i > 0:
+            simple_model.add(tf.keras.layers.Dense(
+                units=layer_width[i],
+                activation=act_fun[i]
+            ))
+        # Input layer
+        else:
+            simple_model.add(tf.keras.layers.Dense(
+                units=layer_width[i],
+                activation=act_fun[i],
+                input_shape=(input_dim,),
+            ))
+
+        # Add in necessary dropout layer
+        if dropout_rate[i]:
+            simple_model.add(tf.keras.layers.Dropout(
+                rate=dropout_rate[i]
+            ))
+            pass
+
+    return simple_model
+
+
+def create_sequential_bezier_model(
+        input_dim: int, output_dim: int,
+        degree: int,
+        depth: int,
+        layer_width=None, act_fun=None
+):
+    """Create a simple sequential neural network.
+
+    Description:
+        Creates a simple tensorflow sequential neural network with specifiable widths. All activation functions are simply ReLU.
+
+    Args:
+        input_dim (int): Input dimension i.e X.shape[1] where X is a numpy array and len(X.shape) == 2.
+        output_dim (int): Output dimension i.e. Y.shape[2] where Y is a numpy array and
+            len(Y.shape) == 3
+        degree (int): degree of the Bezier polynomial
+        depth (int): Number of layers in the neural network.
+        layer_width (tuple or int): Specifying individual layer widths. If None, all layers are taken
+            to be the output dimension. If an integer, then all layers have that width. If a tuple,
+            then each element is a layer width with the assertion that len(layer_width) == depth.
+        act_fun (callable or tuple(callables)): Activation function to use on layers. Sample logic as
+            layer_width but this time with an activation function. Default is the tensorflow relu
+            function.
+
+    Returns:
+        bezier_model (tf.keras.Model): Sequenctial bezier neural network model. Outputs in
+            R^{(degree + 1) times output_dim}
+    """
+
+    # Immediate assertions
+    assert input_dim >= 0
+    assert output_dim >= 0
+    assert depth > 0
+    assert degree >= 0
+
+    # Do the layer width logic
+    if layer_width is None:
+        layer_width = (output_dim*(degree + 1),) * depth  # Simply match output width
+    elif type(layer_width) == int:
+        assert layer_width > 0
+        layer_width = (layer_width,) * (depth - 1) + (output_dim*(degree + 1),)
+    elif type(layer_width) == tuple:
+        assert len(layer_width) == depth
+        for lw in layer_width:
+            assert type(lw) == int
+            assert lw > 0
+        assert layer_width[-1] == ouput_dim*(degree + 1)
+    else:
+        raise IOError(
+            "layer_width needs to be None, tuple, or int rather than %s" % type(layer_width)
+        )
+
+    # Do the activation function logic
+    if act_fun is None:
+        act_fun = (tf.nn.relu,) * depth  # default 
+    elif type(act_fun) == tuple:
+        assert len(act_fun) == depth
+        for af in act_fun:
+            try:
+                tf.keras.activations.serialize(af)
+            except ValueError as ve:
+                raise ValueError("One of the activation functions is invalid in tuple")
+    else:
+        tf.keras.activations.serialize(act_fun)
+        act_fun = (act_fun,) * depth  # Match number of layers
+
+    # Create model
+    bezier_model = tf.keras.Sequential()
+    
+    for i in range(depth):
+        # For all every other layer
+        if i > 0:
+            bezier_model.add(tf.keras.layers.Dense(
+                units=layer_width[i],
+                activation=act_fun[i]
+            ))
+        # Input layer
+        else:
+            bezier_model.add(tf.keras.layers.Dense(
+                units=layer_width[i],
+                activation=act_fun[i],
+                input_shape=(input_dim,),
+            ))
+
+    # Add in a reshape to get (degree, output_dim)
+    bezier_model.add(tf.keras.layers.Reshape((degree + 1, output_dim)))
+
+    return bezier_model
 
 
 # Running as script

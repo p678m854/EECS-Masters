@@ -3,7 +3,7 @@ File: CUSTOM-LOSS-FUNCTIONS.PY
 Author: Patrick McNamee
 Date: 12/15/2020
 
-Brief: Custom loss functions for tensorflow neural networks.
+Brief: Custom loss functions for Tensorflow 2.x neural networks.
 """
 
 
@@ -45,9 +45,9 @@ def roughness_penalty(
     XtXinvXt = tf.linalg.matmul(tf.linalg.inv(tf.linalg.matmul(X, X, transpose_a=True)), X, transpose_b=True)
     
     # Loop over given data
-    def smoothness_sse(y_pred_sample):
+    def roughness_sse(y_pred_sample):
         """Calculate SSE from polynomial"""
-        # Cast y from 
+        # Cast y from 1D tensor to 2D tensor for matrix multiplication
         y, _ = tf.meshgrid(
             y_pred_sample,
             tf.keras.backend.cast_to_floatx(tf.range(tf.constant(1))),
@@ -59,11 +59,12 @@ def roughness_penalty(
         return tf.keras.backend.sum(tf.keras.backend.square(error_continuity))
     
     dist_from_Cd = tf.vectorized_map(
-        fn=smoothness_sse,
+        fn=roughness_sse,
         elems=y_pred
     )
     return tf.math.reduce_mean(dist_from_Cd)
     
+
 @tf.function
 def mse_and_roughness(
     y_actual, y_pred,
@@ -74,7 +75,73 @@ def mse_and_roughness(
     mse_points = tf.keras.losses.MSE(y_actual, y_pred)  # mean squared error
     mrp = roughness_penalty(y_pred, degree)  # mean smoothness penalty
     
-    return (tf.constant(1.) - alpha)*mse_points + alpha*tf.keras.backend.sum(mrp)
+    # return (tf.constant(1.) - alpha)*mse_points + alpha*tf.keras.backend.sum(mrp)
+    return mse_points + alpha*tf.keras.backend.sum(mrp)
+
+
+@tf.function
+def multi_dimensional_roughness_penalty(
+    y_pred,
+    degree=tf.constant(5, dtype=tf.int32),
+):
+    """Computes a penalty of roughness from a LSE best-fit polynomial of outputs in R^k space
+    
+    Description: For each sample, the cost function attempts to find the sum of squared error
+        of the points from being in a smooth class $C^d$ specified by a given degree ($d$).
+        Note that $\forall\ k\geq 0,\ C^{k+1} \subsetneq C^k$ and membership of $C^k$ is determined
+        if the function is $k$ differentiable. Polynomials are used to determine if the points
+        belong in $C^d$ as $p$ with $\deg(p)=d \in C^d$ and all the points can be estimated
+        by a Taylor series expansion about $x=\vec{0}$. The development assumption was that
+        all points predicted belong to a $f\in C^0$ as the problem was dealing with a continuous
+        stochastic function so $\min_{p\in P^d} \sum_{i=1}^n (f(x_i) - p(x_i))^2$ would give
+        a distance (pseudo-metric, dealing with element and a set) of $f$ from $C^d$.
+    
+    Args:
+        y_pred (tf.Tensor): NxMxK tensor outputed by the neural network corresponding to N samples of
+             M points in R^K sapce.
+        degree (tf.constant): degree of polynomial used to determine distance.
+    
+    Returns:
+        sample averaged sum of squared error of predicted points from least squares polynomial fit.
+    """
+    # Compute X for LSE where input is simply and integer list
+    base, power = tf.meshgrid(
+        tf.keras.backend.cast_to_floatx(tf.range(tf.shape(y_pred)[1])),
+        tf.keras.backend.cast_to_floatx(tf.range(degree + tf.constant(1))),
+        indexing='ij'
+    )
+    X = tf.math.pow(base, power)
+    # There will be an issue xith (XtX)^-1 if X is reducable to a square matrix
+    XtXinvXt = tf.linalg.matmul(tf.linalg.inv(tf.linalg.matmul(X, X, transpose_a=True)), X, transpose_b=True)
+    
+    # Loop over given data
+    def roughness_sse(y_pred_sample):
+        """Calculate SSE from polynomial"""
+        # LS estimator
+        theta = tf.linalg.matmul(XtXinvXt, y_pred_sample)
+        error_continuity = y_pred_sample - tf.linalg.matmul(X, theta)
+        return tf.keras.backend.sum(tf.keras.backend.square(error_continuity))  # SSE
+    
+    dist_from_Cd = tf.vectorized_map(
+        fn=roughness_sse,
+        elems=y_pred
+    )
+    return tf.math.reduce_mean(dist_from_Cd)
+
+@tf.function
+def multidimensional_mse_and_roughness(
+    y_actual, y_pred,
+    degree=tf.constant(5),
+    alpha=tf.constant(0.1),
+):
+    """Application of mse_and_roughness to multiple channels/y dimensions"""
+
+    """Linear weighting between MSE and average smoothness penalty"""
+    mse_points = tf.keras.losses.MSE(y_actual, y_pred)  # mean squared error
+    mrp = multi_dimensional_roughness_penalty(y_pred, degree)  # mean smoothness penalty
+    
+    return mse_points + alpha*tf.keras.backend.sum(mrp)
+
 
 @tf.function
 def bezier_loss(y_actual, y_pred):
@@ -101,7 +168,9 @@ def bezier_loss(y_actual, y_pred):
     # Preallocate factorial parts
     d = tf.range(Dp1)
     factorial = tf.math.cumprod(tf.range(tf.constant(1), Dp1 + tf.constant(1)), exclusive=True)
-    nchoosek = tf.keras.backend.cast_to_floatx(factorial[Dp1 - tf.constant(1)]/(factorial*factorial[::-1]))
+    nchoosek = tf.keras.backend.cast_to_floatx(
+        factorial[Dp1 - tf.constant(1)]/(factorial*factorial[::-1])
+    )
     
     # Get bezier coefficients for all 
     def bezier_coefficients(t):
@@ -141,7 +210,7 @@ def bezier_loss(y_actual, y_pred):
     
     error = y_actual[:, :, 1:] - predicted_points
     
-    # Find sum of squared l2 norm and average by N
+    # Find sum of squared l2 norm and average by N (comment, should I just use MSE for this?)
     return tf.keras.backend.sum(tf.keras.backend.square(
         error
     ))/tf.keras.backend.cast_to_floatx(tf.shape(y_actual)[0])

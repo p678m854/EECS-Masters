@@ -1538,7 +1538,11 @@ def generate_opt_control_test_data(
         X, Y, tvec_y,
         pos, att, pos_ref, att_ref, motor_speeds, accel, gyro, pwms,
         n_pos, n_att, n_pref, n_aref, n_motors, n_acc, n_gyro, n_pwms,
-        stride_pos, stride_att, stride_pos_ref, stride_att_ref, stride_motor_speeds, stride_accel, stride_gyro, stride_pwms
+        stride_pos, stride_att,
+        stride_pos_ref, stride_att_ref,
+        stride_motor_speeds,
+        stride_accel, stride_gyro,
+        stride_pwms
     ):
         pwm_length = int(Y.shape[1]/4)
         for i in numba.prange(N):
@@ -1578,7 +1582,8 @@ def generate_opt_control_test_data(
                 X[i, :] = np.nan
 
             # Update expected time
-            tvec_y[i, :] = t_sample + dt_pwms*(np.arange(0, n_pwms)[::stride_pwms])
+            # tvec_y[i, :] = t_sample + dt_pwms*(np.arange(0, n_pwms)[::stride_pwms])
+            tvec_y[i, :] = t_pwms[i:(i+n_pwms):stride_pwms]
     
     fast_generator(
         X, Y, tvec_y, 
@@ -1648,7 +1653,7 @@ def trim_opt_control_test_data(
     Ynew = np.zeros((Y.shape[0], Ynew_d))
 
     # X and Y have been flattened fortran style
-    #     i.e. [c1, c2, ..., cm] rather than [r1, r2, ..., rn] for a (n,m) matrix
+    #     i.e. [c1^T, c2^T, ..., cm^T] rather than [r1, r2, ..., rn] for a (n,m) matrix
 
     # index offsets
     o_offset = 0  # original data
