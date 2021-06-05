@@ -334,10 +334,10 @@ def create_sequential_bezier_model(
         depth: int,
         layer_width=None, act_fun=None
 ):
-    """Create a simple sequential neural network.
+    """Create a simple sequential neural network with outpuing bezier splines.
 
     Description:
-        Creates a simple tensorflow sequential neural network with specifiable widths. All activation functions are simply ReLU.
+        Creates a simple tensorflow sequential neural network with specifiable widths. All activation functions are simply ReLU by default. Output is a Bezier curve.
 
     Args:
         input_dim (int): Input dimension i.e X.shape[1] where X is a numpy array and len(X.shape) == 2.
@@ -417,6 +417,109 @@ def create_sequential_bezier_model(
 
     return bezier_model
 
+
+def create_sequential_regularized_model(
+        input_dim: int, output_dim: int,
+        depth: int,
+        regularizer, reg_penalty,
+        layer_width=None, act_fun=None,
+):
+    """Create a simple sequential neural network with regularization.
+
+    Description:
+        Creates a simple tensorflow sequential neural network with specifiable widths. All activation
+        functions are simply ReLU. Regularization is applied to the kernel and bias parameters.
+
+    Args:
+        input_dim (int): Input dimension i.e X.shape[1] where X is a numpy array and len(X.shape) == 2.
+        output_dim (int): Output dimension i.e. Y.shape[2] where Y is a numpy array and
+            len(Y.shape) == 3
+        depth (int): Number of layers in the neural network.
+        regularizer (callable): Tensorflow regularizer to call to be applied to the kernel and bias.
+        reg_penalty (float): penalty associated with regularization in training.
+        layer_width (tuple or int): Specifying individual layer widths. If None, all layers are taken
+            to be the output dimension. If an integer, then all layers have that width. If a tuple,
+            then each element is a layer width with the assertion that len(layer_width) == depth.
+        act_fun (callable or tuple(callables)): Activation function to use on layers. Sample logic as
+            layer_width but this time with an activation function. Default is the tensorflow relu
+            function.
+
+    Returns:
+        regularized_model (tf.keras.Model): Sequential module with regularization applied to both the
+            kernel and bias in each layer.
+    """
+
+    # Immediate assertions
+    assert input_dim >= 0
+    assert output_dim >= 0
+    assert depth > 0
+
+    # Do the layer width logic
+    if layer_width is None:
+        layer_width = (output_di,) * depth  # Simply match output width
+    elif type(layer_width) == int:
+        assert layer_width > 0
+        layer_width = (layer_width,) * depth
+    elif type(layer_width) == tuple:
+        assert len(layer_width) == depth
+        for lw in layer_width:
+            assert type(lw) == int
+            assert lw > 0
+        assert layer_width[-1] == ouput_dim
+    else:
+        raise IOError(
+            "layer_width needs to be None, tuple, or int rather than %s" % type(layer_width)
+        )
+
+    # Do the activation function logic
+    if act_fun is None:
+        act_fun = (tf.nn.relu,) * depth  # default 
+    elif type(act_fun) == tuple:
+        assert len(act_fun) == depth
+        for af in act_fun:
+            try:
+                tf.keras.activations.serialize(af)
+            except ValueError as ve:
+                raise ValueError("One of the activation functions is invalid in tuple")
+    else:
+        tf.keras.activations.serialize(act_fun)
+        act_fun = (act_fun,) * depth  # Match number of layers
+
+    # TODO: do the same thing with regularization and penalty terms
+    # Regularization function
+    if type(regularizer) == tuple:
+        assert len(regularizer) == depth
+    else:
+        regularizer = (regularizer,)*depth
+
+    if type(reg_penalty) == tuple:
+        assert len(reg_penalty) == depth
+    else:
+        reg_penalty = (reg_penalty,)*depth
+
+    # Create model
+    regularized_model = tf.keras.Sequential()
+    
+    for i in range(depth):
+        # For all every other layer
+        if i > 0:
+            regularized_model.add(tf.keras.layers.Dense(
+                units=layer_width[i],
+                activation=act_fun[i],
+                kernel_regularizer=regularizer[i](reg_penalty[i]),
+                bias_regularizer=regularizer[i](reg_penalty[i]),
+            ))
+        # Input layer
+        else:
+            regularized_model.add(tf.keras.layers.Dense(
+                units=layer_width[i],
+                activation=act_fun[i],
+                kernel_regularizer=regularizer[i](reg_penalty[i]),
+                bias_regularizer=regularizer[i](reg_penalty[i]),
+                input_shape=(input_dim,),
+            ))
+
+    return regularized_model
 
 # Running as script
 if __name__ == "__main__":
